@@ -1,0 +1,37 @@
+# ===== Node =====
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ===== Capacitor =====
+.capacitor/
+
+# ===== Android / Gradle (generated) =====
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/captures/
+android/.externalNativeBuild/
+android/.cxx/
+
+# Capacitor copies www into here on sync
+android/app/src/main/assets/public/
+
+# ===== Signing / secrets (NEVER commit) =====
+*.keystore
+*.jks
+keystore.properties
+google-services.json
+*.env
+.env*
+
+# ===== OS / Editor =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.zip

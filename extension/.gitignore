@@ -1,0 +1,8 @@
+# Đóng gói / hệ điều hành
+*.zip
+.DS_Store
+Thumbs.db
+
+# Trình soạn thảo
+.vscode/
+.idea/

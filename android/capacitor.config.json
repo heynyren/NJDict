@@ -1,0 +1,17 @@
+{
+  "appId": "com.nhien.tramazii",
+  "appName": "NJDict",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon",
+      "iconColor": "#2f6fed"
+    }
+  }
+}

@@ -21,6 +21,10 @@ android/.cxx/
 # Capacitor copies www into here on sync
 android/app/src/main/assets/public/
 
+# Capacitor tự sinh mỗi lần "cap sync" — đường dẫn node_modules theo máy, không commit
+android/capacitor.settings.gradle
+android/app/capacitor.build.gradle
+
 # ===== Signing / secrets (NEVER commit) =====
 *.keystore
 *.jks

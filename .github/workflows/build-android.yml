@@ -41,8 +41,9 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
-      - name: Add Android platform
-        run: npx cap add android
+      - name: Add Android platform (nếu chưa có)
+        run: |
+          if [ ! -d android ]; then npx cap add android; else echo "Đã có sẵn native project android/ — bỏ qua cap add."; fi
 
       - name: Sync web assets
         run: npx cap sync android

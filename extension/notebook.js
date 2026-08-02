@@ -339,12 +339,30 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---- Mở lại trang nguồn và tô sáng từ/câu đã lưu ----
+function withTextFragment(baseUrl, sel) {
+  const s = (sel || "").replace(/\s+/g, " ").trim();
+  if (!s) return baseUrl;
+  let frag;
+  if (s.length <= 60) {
+    frag = encodeURIComponent(s);
+  } else {
+    const w = s.split(" ");
+    let start, end;
+    if (w.length >= 4) {                    // ngôn ngữ có dấu cách -> cắt theo từ
+      start = w.slice(0, 6).join(" ");
+      end = w.slice(-6).join(" ");
+    } else {                                 // ít dấu cách (tiếng Nhật…) -> cắt theo ký tự
+      start = s.slice(0, 12);
+      end = s.slice(-12);
+    }
+    frag = encodeURIComponent(start) + "," + encodeURIComponent(end);
+  }
+  return baseUrl + (baseUrl.indexOf("#") >= 0 ? ":~:text=" : "#:~:text=") + frag;
+}
 function openSource(it) {
   if (!it.src || !it.src.url) return;
-  const text = (it.src.sel || it.word || "").slice(0, 400);
-  chrome.storage.local.set({ pendingHighlight: { url: it.src.url, text: text, ts: Date.now() } }, () => {
-    chrome.tabs.create({ url: it.src.url });
-  });
+  const sel = (it.src.sel || it.word || "").slice(0, 400);
+  chrome.tabs.create({ url: withTextFragment(it.src.url, sel) });
 }
 
 // ---- Danh sách ----

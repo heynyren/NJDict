@@ -172,6 +172,13 @@ function speakJa(text) {
 // Chu kỳ (ngày) theo mức nhớ; Quên -> về mức 0 và học lại trong buổi.
 const SRS_STEPS = [1, 3, 7, 14, 30, 60, 120];
 const DAY = 24 * 60 * 60 * 1000;
+// Đến hạn vào ĐẦU NGÀY mục tiêu (00:00), không phải đúng N×24 giờ sau —
+// để hôm sau mở app lúc nào cũng thấy từ, không bị "sáng ít, tối mới đủ".
+function dueInDays(days) {
+  const d = new Date(Date.now() + days * DAY);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
 
 function isDue(it, now) {
   if (it.del) return false;
@@ -192,7 +199,7 @@ async function gradeWord(key, remembered) {
   let lv, due;
   if (remembered) {
     lv = Math.min(cur + 1, SRS_STEPS.length - 1);
-    due = now + SRS_STEPS[lv] * DAY;
+    due = dueInDays(SRS_STEPS[lv]);
   } else {
     lv = -1;                 // rơi về đầu
     due = now;               // học lại ngay trong buổi

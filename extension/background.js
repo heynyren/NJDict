@@ -6,12 +6,17 @@ const CACHE_TTL = 30 * 86400000;     // 30 ngày
 
 const DEFAULT_SETTINGS = { inline: true, requireCtrl: false, maxLen: 30 };
 
-// ==== Menu chuột phải -> cửa sổ popup nhỏ ====
+// ==== Menu chuột phải ====
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "tra-mazii-popup",
       title: 'Tra "%s" bằng NJDict',
+      contexts: ["selection"]
+    });
+    chrome.contextMenus.create({
+      id: "luu-njdict",
+      title: 'Lưu "%s" vào NJDict (kèm nguồn)',
       contexts: ["selection"]
     });
   });
@@ -20,8 +25,82 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "tra-mazii-popup" && info.selectionText) {
     await openPopupWindow(info.selectionText, tab);
+  } else if (info.menuItemId === "luu-njdict" && info.selectionText) {
+    await handleContextSave(info, tab);
   }
 });
+
+// ==== Lưu từ menu chuột phải: dịch sang tiếng Việt + lưu kèm nguồn & ngữ cảnh ====
+function grabSelCtx() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const text = (sel.toString() || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  let prefix = "", suffix = "";
+  try {
+    const r = sel.getRangeAt(0);
+    const sc = r.startContainer, ec = r.endContainer;
+    if (sc && sc.nodeType === 3) prefix = (sc.textContent || "").slice(0, r.startOffset).slice(-70);
+    if (ec && ec.nodeType === 3) suffix = (ec.textContent || "").slice(r.endOffset).slice(0, 70);
+  } catch (e) {}
+  return { sel: text, prefix: prefix.replace(/\s+/g, " ").trim(), suffix: suffix.replace(/\s+/g, " ").trim() };
+}
+
+async function translateToVi(text) {
+  try { const v = await gtxTranslate(text, "auto", "vi"); if (v) return v; } catch (e) {}
+  const { syncUrl, syncToken } = await chrome.storage.local.get(["syncUrl", "syncToken"]);
+  if (syncUrl) {
+    try {
+      const r = await fetch(syncUrl, {
+        method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ token: syncToken || "", action: "translate", text, from: "", to: "vi" })
+      });
+      const d = await r.json();
+      if (d && d.text) return d.text;
+    } catch (e) {}
+  }
+  return "";
+}
+
+function flashBadge(txt, color) {
+  try {
+    chrome.action.setBadgeText({ text: txt });
+    chrome.action.setBadgeBackgroundColor({ color: color || "#1a9d5a" });
+    setTimeout(() => { try { chrome.action.setBadgeText({ text: "" }); } catch (e) {} }, 1600);
+  } catch (e) {}
+}
+
+async function handleContextSave(info, tab) {
+  const rawSel = (info.selectionText || "").replace(/\s+/g, " ").trim();
+  if (!rawSel) return;
+  const url = (tab && tab.url) || "";
+  const title = ((tab && tab.title) || "").slice(0, 200);
+  const isPdf = /\.pdf(\?|#|$)/i.test(url);
+
+  let ctx = { sel: rawSel, prefix: "", suffix: "" };
+  if (!isPdf && tab && tab.id && /^https?:/i.test(url)) {
+    try {
+      const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: grabSelCtx });
+      const r = res && res[0] && res[0].result;
+      if (r && r.sel) ctx = r;
+    } catch (e) {}
+  }
+
+  const vi = await translateToVi(ctx.sel).catch(() => "");
+  const src = { url, title, sel: ctx.sel.slice(0, 400) };
+  if (ctx.prefix) src.prefix = ctx.prefix.slice(-80);
+  if (ctx.suffix) src.suffix = ctx.suffix.slice(0, 80);
+  if (isPdf) src.pdf = true;
+
+  const entry = { word: ctx.sel.slice(0, 400), reading: "", means: vi ? [vi] : [], kind: "sent", src };
+  try {
+    await saveWord(entry, "javi");
+    scheduleSync();
+    flashBadge("\u2713", "#1a9d5a");
+  } catch (e) {
+    flashBadge("!", "#d33");
+  }
+}
 
 async function openPopupWindow(rawText, tab) {
   const word = rawText.trim();

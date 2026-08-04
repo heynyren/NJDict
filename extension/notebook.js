@@ -338,38 +338,29 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "0" || e.key === "Delete") { e.preventDefault(); deleteCurrentCard(); }
 });
 
-// ---- Mở lại trang nguồn và tô sáng từ/câu đã lưu ----
-function buildTextFragment(src) {
-  const s = (src.sel || "").replace(/\s+/g, " ").trim();
-  if (!s) return "";
-  const enc = encodeURIComponent;
-  let core;
-  if (s.length <= 60) {
-    core = enc(s);
-  } else {
-    const w = s.split(" ");
-    if (w.length >= 4) core = enc(w.slice(0, 6).join(" ")) + "," + enc(w.slice(-6).join(" "));
-    else core = enc(s.slice(0, 12)) + "," + enc(s.slice(-12));
-  }
-  let frag = core;
-  const pre = (src.prefix || "").split(" ").filter(Boolean).slice(-4).join(" ");
-  const suf = (src.suffix || "").split(" ").filter(Boolean).slice(0, 4).join(" ");
-  if (pre) frag = enc(pre) + "-," + frag;
-  if (suf) frag = frag + ",-" + enc(suf);
-  return frag;
-}
+// ---- Mở lại trang nguồn và tô sáng ĐÚNG đoạn đã lưu ----
+// Content script trên trang đích dựng chỉ mục văn bản, tìm lại đoạn (kể cả đoạn dài
+// trải nhiều thẻ, dùng prefix/suffix để chọn đúng chỗ) rồi bọc <mark> và cuộn tới.
+// Bền vững hơn Text Fragment: tô sáng đa-node, không phụ thuộc hỗ trợ của trình duyệt.
 function openSource(it) {
   const src = it.src;
   if (!src || !src.url) return;
-  if (src.pdf) {
-    const q = (src.sel || it.word || "").replace(/\s+/g, " ").trim().split(" ").slice(0, 10).join(" ");
-    try { if (navigator.clipboard) navigator.clipboard.writeText(q); } catch (e) {}
+  const text = (src.sel || it.word || "").replace(/\s+/g, " ").trim();
+  chrome.storage.local.set({
+    pendingHighlight: {
+      url: src.url, text: text,
+      prefix: src.prefix || "", suffix: src.suffix || "",
+      ts: Date.now()
+    }
+  }, () => {
+    if (src.pdf) {
+      // Trình xem PDF tích hợp của Chrome giấu lớp chữ khỏi content script nên có thể
+      // không tô sáng được — chép sẵn đoạn vào bộ nhớ tạm để bạn Ctrl+F dán tìm nhanh.
+      const q = text.split(" ").slice(0, 10).join(" ");
+      try { if (navigator.clipboard) navigator.clipboard.writeText(q); } catch (e) {}
+    }
     chrome.tabs.create({ url: src.url });
-    return;
-  }
-  const frag = buildTextFragment(src);
-  const url = frag ? src.url + (src.url.indexOf("#") >= 0 ? ":~:text=" : "#:~:text=") + frag : src.url;
-  chrome.tabs.create({ url });
+  });
 }
 
 // ---- Danh sách ----

@@ -331,12 +331,21 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "0" || e.key === "Delete") { e.preventDefault(); deleteCurrentCard(); }
 });
 
-// ---- Mở lại trang nguồn và tô sáng từ/câu đã lưu ----
+// ---- Mở lại trang nguồn và tô sáng ĐÚNG đoạn đã lưu ----
+// Content script trên trang đích dựng chỉ mục văn bản, tìm lại đoạn (kể cả đoạn dài
+// trải nhiều thẻ, dùng prefix/suffix để chọn đúng chỗ) rồi bọc <mark> và cuộn tới.
 function openSource(it) {
   if (!it.src || !it.src.url) return;
-  const text = (it.src.sel || it.word || "").slice(0, 400);
-  chrome.storage.local.set({ pendingHighlight: { url: it.src.url, text: text, ts: Date.now() } }, () => {
-    chrome.tabs.create({ url: it.src.url });
+  const src = it.src;
+  const text = (src.sel || it.word || "").slice(0, 400);
+  chrome.storage.local.set({
+    pendingHighlight: {
+      url: src.url, text: text,
+      prefix: src.prefix || "", suffix: src.suffix || "",
+      ts: Date.now()
+    }
+  }, () => {
+    chrome.tabs.create({ url: src.url });
   });
 }
 

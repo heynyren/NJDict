@@ -61,6 +61,11 @@
     /* Nút loa */
     .spk { border: none; background: none; font-size: 15px; cursor: pointer; padding: 0 3px; }
     .spk:hover { transform: scale(1.15); }
+    .favctl { display: inline-flex; gap: 1px; margin-left: 4px; vertical-align: 1px; }
+    .favbtn { border: none; background: none; font-size: 13.5px; line-height: 1; cursor: pointer; padding: 2px 3px; border-radius: 6px; opacity: .5; }
+    .favbtn:hover { opacity: 1; background: #f1f3f6; }
+    .favbtn.on { opacity: 1; }
+    .favbtn.dislike.on { filter: none; }
     .due { display:inline-block; font-size: 10.5px; color: #b26a00; border: 1px solid #f0ddb0; background:#fff8e6; border-radius: 6px; padding: 0 5px; margin-left: 6px; vertical-align: 2px; }
     /* Chế độ học */
     #studyOverlay { position: fixed; inset: 0; background: rgba(20,26,36,.55); display: none; align-items: center; justify-content: center; z-index: 50; }

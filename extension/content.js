@@ -40,6 +40,7 @@
         font-size:12px; font-weight:700; padding:4px 8px; cursor:pointer; white-space:nowrap; }
       .sv.on { border-color:#1a9d5a; color:#1a9d5a; background:#f0faf4; cursor:default; }
       .tr { font-size:14.5px; line-height:1.55; }
+      .furi { color:#2f6fed; font-size:12.5px; margin-top:5px; font-style:italic; }
       .src { color:#6b7684; font-size:12.5px; margin-top:7px; padding-top:6px; border-top:1px dashed #e6e9ef;
         max-height:70px; overflow:hidden; }
       .lbl { display:inline-block; font-size:10.5px; font-weight:700; color:#2f6fed; border:1px solid #cddcff;
@@ -181,13 +182,18 @@
       e.stopPropagation();
       chrome.runtime.sendMessage({
         type: "SAVE_WORD",
-        entry: { word: text, reading: "", means: [res.text], kind: "sent", src: pageSrc(text) },
+        entry: { word: text, reading: res.reading || "", means: [res.text], kind: "sent", src: pageSrc(text) },
         dict: "javi"
       }, () => { sv.textContent = "✓ Đã lưu"; sv.classList.add("on"); });
     });
     hd.appendChild(sv);
     box.appendChild(hd);
 
+    // Phiên âm (furigana romaji) của câu tiếng Nhật — lưu kèm để Sổ tay & Chế độ học vẫn thấy.
+    if (res.reading) {
+      const rd = document.createElement("div"); rd.className = "furi"; rd.textContent = "🗣 " + res.reading;
+      box.appendChild(rd);
+    }
     const src = document.createElement("div"); src.className = "src"; src.textContent = text;
     box.appendChild(src);
     place();

@@ -272,7 +272,7 @@ function doTranslate(raw) {
     hd.appendChild(tr);
     const sv = document.createElement("button"); sv.className = "save"; sv.textContent = "＋ Lưu";
     sv.addEventListener("click", () => {
-      const entry = { word: text, reading: "", means: [res.text], kind: "sent" };
+      const entry = { word: text, reading: res.reading || "", means: [res.text], kind: "sent" };
       if (initialSrc && initialSrc.url) entry.src = { url: initialSrc.url, title: initialSrc.title, sel: text };
       chrome.runtime.sendMessage({ type: "SAVE_WORD", entry: entry, dict: "javi" }, () => {
         sv.textContent = "✓ Đã lưu"; sv.classList.add("saved");
@@ -280,6 +280,10 @@ function doTranslate(raw) {
     });
     hd.appendChild(sv);
     transEl.appendChild(hd);
+    if (res.reading) {
+      const rd = document.createElement("div"); rd.className = "furi"; rd.textContent = "🗣 " + res.reading;
+      transEl.appendChild(rd);
+    }
     const src = document.createElement("div"); src.className = "src"; src.textContent = text;
     transEl.appendChild(src);
   });

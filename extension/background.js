@@ -272,7 +272,8 @@ const TR_TTL = 30 * 86400000;
 
 // Endpoint Google Dịch công khai — không cần Apps Script nên nhanh hơn hẳn.
 async function gtxTranslate(text, f, t) {
-  const url = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t"
+  // dt=t: bản dịch; dt=rm: phiên âm (romaji) của nguồn tiếng Nhật.
+  const url = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&dt=rm"
     + "&sl=" + encodeURIComponent(f || "ja") + "&tl=" + encodeURIComponent(t || "vi")
     + "&q=" + encodeURIComponent(text);
   const r = await fetch(url);
@@ -280,9 +281,15 @@ async function gtxTranslate(text, f, t) {
   const data = await r.json();
   const segs = (data && data[0]) || [];
   const out = segs.map((s) => (s && s[0]) || "").join("").trim();
+  // Google để phiên âm nguồn ở phần tử [3] của đoạn cuối (chỗ [0] rỗng).
+  let reading = "";
+  for (const s of segs) { if (s && s[0] == null && typeof s[3] === "string") reading += s[3]; }
+  reading = reading.replace(/\s+/g, " ").trim();
   if (!out) throw new Error("gtx rỗng");
-  return out;
+  return { text: out, reading: reading };
 }
+// Có phải văn bản tiếng Nhật không (hiragana/katakana/kanji)?
+function hasJapanese(s) { return /[぀-ヿ㐀-鿿ｦ-ﾟ]/.test(s || ""); }
 
 async function handleTranslate(rawText, from, to) {
   const text = (rawText || "").trim();
@@ -294,11 +301,11 @@ async function handleTranslate(rawText, from, to) {
   const c = trCache || {};
   const hit = c[key];
   const now = Date.now();
-  if (hit && (now - (hit.ts || 0) < TR_TTL)) return { ok: true, text: hit.v, cached: true };
+  if (hit && (now - (hit.ts || 0) < TR_TTL)) return { ok: true, text: hit.v, reading: hit.rd || "", cached: true };
 
   // 1) Nhanh: gọi thẳng Google Dịch.  2) Dự phòng: Apps Script (nếu (1) lỗi/không có mạng thẳng).
-  let out = "";
-  try { out = await gtxTranslate(text, f, t); } catch (e) { out = ""; }
+  let out = "", reading = "";
+  try { const g = await gtxTranslate(text, f, t); out = g.text; reading = g.reading; } catch (e) { out = ""; }
   if (!out) {
     const { syncUrl, syncToken } = await chrome.storage.local.get(["syncUrl", "syncToken"]);
     if (!syncUrl) return { ok: false, error: "Không dịch được lúc này (và chưa cấu hình đồng bộ để dùng máy chủ dự phòng)." };
@@ -313,14 +320,16 @@ async function handleTranslate(rawText, from, to) {
     out = data.text;
   }
 
-  c[key] = { v: out, ts: now };
+  // Chỉ giữ phiên âm khi NGUỒN là tiếng Nhật (dịch Việt→Nhật thì không cần).
+  if (reading && !hasJapanese(text)) reading = "";
+  c[key] = { v: out, rd: reading, ts: now };
   const keys = Object.keys(c);
   if (keys.length > TR_MAX) {
     keys.sort((a, b) => (c[a].ts || 0) - (c[b].ts || 0));
     for (let i = 0; i < keys.length - TR_MAX; i++) delete c[keys[i]];
   }
   await chrome.storage.local.set({ trCache: c });
-  return { ok: true, text: out };
+  return { ok: true, text: out, reading: reading };
 }
 
 // ==== Đồng bộ Google Drive qua Apps Script ====

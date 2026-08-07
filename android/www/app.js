@@ -65,15 +65,20 @@ async function httpGetJson(url) {
 
 // Gọi thẳng Google Dịch (nhanh, không cần Apps Script).
 async function gtxTranslate(text, f, t) {
-  const url = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t"
+  // dt=t: bản dịch; dt=rm: phiên âm (romaji) của nguồn tiếng Nhật.
+  const url = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&dt=rm"
     + "&sl=" + encodeURIComponent(f || "ja") + "&tl=" + encodeURIComponent(t || "vi")
     + "&q=" + encodeURIComponent(text);
   const data = await httpGetJson(url);
   const segs = (data && data[0]) || [];
   const out = segs.map((s) => (s && s[0]) || "").join("").trim();
+  let reading = "";
+  for (const s of segs) { if (s && s[0] == null && typeof s[3] === "string") reading += s[3]; }
+  reading = reading.replace(/\s+/g, " ").trim();
   if (!out) throw new Error("gtx rỗng");
-  return out;
+  return { text: out, reading: reading };
 }
+function hasJapanese(s) { return /[぀-ヿ㐀-鿿ｦ-ﾟ]/.test(s || ""); }
 
 async function speakJa(text) {
   try {
@@ -390,10 +395,10 @@ async function translateText(text) {
   const cache = (await Store.get("trCache")) || {};
   const key = "ja>vi:" + t;
   const hit = cache[key];
-  if (hit && Date.now() - (hit.ts || 0) < 30 * DAY) return hit.v;
+  if (hit && Date.now() - (hit.ts || 0) < 30 * DAY) return { text: hit.v, reading: hit.rd || "" };
   // 1) Nhanh: gọi thẳng Google Dịch.  2) Dự phòng: Apps Script (nếu (1) lỗi).
-  let out = "";
-  try { out = await gtxTranslate(t, "ja", "vi"); } catch (e) { out = ""; }
+  let out = "", reading = "";
+  try { const g = await gtxTranslate(t, "ja", "vi"); out = g.text; reading = g.reading; } catch (e) { out = ""; }
   if (!out) {
     const cfg = (await Store.get("syncCfg")) || {};
     if (!cfg.url) throw new Error("Không dịch được lúc này (và chưa cấu hình đồng bộ để dùng máy chủ dự phòng).");
@@ -401,11 +406,12 @@ async function translateText(text) {
     if (!r || r.ok === false || !r.text) throw new Error((r && r.error) || "Không dịch được");
     out = r.text;
   }
-  cache[key] = { v: out, ts: Date.now() };
+  if (reading && !hasJapanese(t)) reading = "";
+  cache[key] = { v: out, rd: reading, ts: Date.now() };
   const ks = Object.keys(cache);
   if (ks.length > 300) { ks.sort((a, b) => cache[a].ts - cache[b].ts); for (let i = 0; i < ks.length - 300; i++) delete cache[ks[i]]; }
   await Store.set("trCache", cache);
-  return out;
+  return { text: out, reading: reading };
 }
 
 async function showTranslate(text) {
@@ -413,7 +419,8 @@ async function showTranslate(text) {
   const srcSnap = (currentSrc && currentSrc.url) ? { url: currentSrc.url, title: currentSrc.title, sel: text } : null;
   box.className = "state"; box.textContent = "Đang dịch…";
   try {
-    const out = await translateText(text);
+    const res = await translateText(text);
+    const out = res.text, reading = res.reading || "";
     box.className = "trbox"; box.innerHTML = "";
     const hd = document.createElement("div"); hd.className = "hd";
     const tr = document.createElement("div"); tr.className = "tr"; tr.textContent = out;
@@ -425,7 +432,7 @@ async function showTranslate(text) {
     else sv.addEventListener("click", async () => {
       const nb = await getNB();
       const oldS = nb[key];
-      const neS = { word: text, reading: "", means: [out], dict: "javi", kind: "sent", ts: Date.now() };
+      const neS = { word: text, reading: reading, means: [out], dict: "javi", kind: "sent", ts: Date.now() };
       if (srcSnap) neS.src = srcSnap;
       if (oldS && !oldS.del) { if (oldS.deck) neS.deck = oldS.deck; if (oldS.srs) neS.srs = oldS.srs; if (oldS.src && !neS.src) neS.src = oldS.src; }
       nb[key] = neS;
@@ -435,6 +442,7 @@ async function showTranslate(text) {
     });
     hd.appendChild(sv);
     box.appendChild(hd);
+    if (reading) { const rd = document.createElement("div"); rd.className = "furi"; rd.textContent = "🗣 " + reading; box.appendChild(rd); }
     const src = document.createElement("div"); src.className = "src"; src.textContent = text;
     box.appendChild(src);
   } catch (e) {
@@ -705,11 +713,36 @@ $("stStart").addEventListener("click", async () => {
   $("stEmpty").style.display = "none"; $("stBody").style.display = "";
   showCard();
 });
+// Nút Thích/Không thích ngay trên thẻ học — bật/tắt ngay, không rời buổi học.
+function renderStudyFav(it) {
+  const stFav = $("stFav"); if (!stFav) return;
+  stFav.innerHTML = "";
+  const mk = (val, onTxt, offTxt) => {
+    const on = it.fav === val;
+    const b = document.createElement("button");
+    b.className = "favbtn " + (val === 1 ? "like" : "dislike") + (on ? " on" : "");
+    b.textContent = on ? onTxt : offTxt;
+    b.addEventListener("click", () => setFavStudy(it, val));
+    return b;
+  };
+  stFav.appendChild(mk(1, "❤️", "🤍"));
+  stFav.appendChild(mk(-1, "👎", "👎"));
+}
+async function setFavStudy(it, val) {
+  const nb = await getNB(); const e = nb[it.key];
+  if (!e || e.del) return;
+  const next = (e.fav === val) ? 0 : val;
+  const ne = Object.assign({}, e, { ts: Date.now() });
+  if (next) ne.fav = next; else delete ne.fav;
+  nb[it.key] = ne; await setNB(nb);
+  it.fav = next; renderStudyFav(it); syncSoon();
+}
 function showCard() {
   const it = session.queue[0];
   if (!it) { finishStudy(); return; }
   $("stProg").textContent = "Còn " + session.queue.length + " từ • đã xong " + session.done;
   $("stWord").textContent = it.word;
+  renderStudyFav(it);
   const src = $("stSrc");
   if (src) {
     if (it.src && it.src.url) { src.style.display = ""; src.onclick = () => openSourceExt(it); }

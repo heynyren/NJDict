@@ -47,7 +47,8 @@ function grabSelCtx() {
 }
 
 async function translateToVi(text) {
-  try { const v = await gtxTranslate(text, "auto", "vi"); if (v) return v; } catch (e) {}
+  // gtxTranslate trả về {text, reading} -> chỉ lấy phần chữ dịch (tránh lưu [object Object]).
+  try { const g = await gtxTranslate(text, "auto", "vi"); if (g && g.text) return g.text; } catch (e) {}
   const { syncUrl, syncToken } = await chrome.storage.local.get(["syncUrl", "syncToken"]);
   if (syncUrl) {
     try {

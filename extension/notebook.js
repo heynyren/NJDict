@@ -35,10 +35,27 @@ function activeDecks() {
 }
 function deckName(id) { const d = decks[id]; return d && !d.del ? d.name : null; }
 
+// Nghĩa có thể bị lưu nhầm thành object (lỗi cũ) -> lấy lại phần chữ.
+function meanToStr(m) {
+  if (typeof m === "string") return m;
+  if (m && typeof m === "object") return m.text || m.mean || m.means || m.v || "";
+  return m == null ? "" : String(m);
+}
+
 // ---- Tải dữ liệu ----
 async function load() {
   const s = await getStore();
   decks = s.decks;
+  // Khôi phục các mục cũ bị lưu nghĩa dạng object ("[object Object]") -> chuỗi, rồi lưu lại.
+  let fixed = false;
+  for (const k in s.nb) {
+    const e = s.nb[k];
+    if (e && Array.isArray(e.means)) {
+      const nm = e.means.map(meanToStr);
+      if (nm.some((v, i) => v !== e.means[i])) { e.means = nm; fixed = true; }
+    }
+  }
+  if (fixed) { await setNotebook(s.nb); syncSoon(); }
   items = Object.entries(s.nb).map(([key, v]) => ({ key, ...v }));
   items.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   // nếu sổ đang chọn đã bị xoá -> quay về Tất cả

@@ -544,8 +544,18 @@ function toast(msg) {
   toast._t = setTimeout(() => { t.className = ""; }, 4000);
 }
 
+// Nghĩa có thể bị lưu nhầm thành object (lỗi cũ) -> lấy lại phần chữ.
+function meanToStr(m) {
+  if (typeof m === "string") return m;
+  if (m && typeof m === "object") return m.text || m.mean || m.means || m.v || "";
+  return m == null ? "" : String(m);
+}
 async function drawNotebook() {
   const nb = await getNB(), decks = await getDecks();
+  // Khôi phục các mục cũ bị lưu nghĩa dạng object ("[object Object]") -> chuỗi, rồi lưu lại.
+  let __fx = false;
+  for (const k in nb) { const e = nb[k]; if (e && Array.isArray(e.means)) { const nm = e.means.map(meanToStr); if (nm.some((v, i) => v !== e.means[i])) { e.means = nm; __fx = true; } } }
+  if (__fx) { await setNB(nb); syncSoon(); }
   const items = Object.entries(nb).map(([key, v]) => ({ key, ...v })).sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const activeItems = items.filter((it) => !it.del);
   if (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE && !deckName(decks, curDeck)) curDeck = ALL;

@@ -47,20 +47,21 @@ function grabSelCtx() {
 }
 
 async function translateToVi(text) {
-  // gtxTranslate trả về {text, reading} -> chỉ lấy phần chữ dịch (tránh lưu [object Object]).
-  try { const g = await gtxTranslate(text, "auto", "vi"); if (g && g.text) return g.text; } catch (e) {}
+  // Ép sl=ja khi là tiếng Nhật -> phiên âm ra romaji Nhật đúng (auto có thể nhầm sang pinyin Trung).
+  const sl = hasJapanese(text) ? "ja" : "auto";
+  try { const g = await gtxTranslate(text, sl, "vi"); if (g && g.text) return { text: g.text, reading: g.reading || "" }; } catch (e) {}
   const { syncUrl, syncToken } = await chrome.storage.local.get(["syncUrl", "syncToken"]);
   if (syncUrl) {
     try {
       const r = await fetch(syncUrl, {
         method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ token: syncToken || "", action: "translate", text, from: "", to: "vi" })
+        body: JSON.stringify({ token: syncToken || "", action: "translate", text, from: sl === "ja" ? "ja" : "", to: "vi" })
       });
       const d = await r.json();
-      if (d && d.text) return d.text;
+      if (d && d.text) return { text: d.text, reading: "" };
     } catch (e) {}
   }
-  return "";
+  return { text: "", reading: "" };
 }
 
 function flashBadge(txt, color) {
@@ -87,13 +88,15 @@ async function handleContextSave(info, tab) {
     } catch (e) {}
   }
 
-  const vi = await translateToVi(ctx.sel).catch(() => "");
+  const tr = await translateToVi(ctx.sel).catch(() => ({ text: "", reading: "" }));
+  const vi = tr.text;
+  const reading = hasJapanese(ctx.sel) ? (tr.reading || "") : "";   // furigana (romaji) khi là tiếng Nhật
   const src = { url, title, sel: ctx.sel.slice(0, 400) };
   if (ctx.prefix) src.prefix = ctx.prefix.slice(-80);
   if (ctx.suffix) src.suffix = ctx.suffix.slice(0, 80);
   if (isPdf) src.pdf = true;
 
-  const entry = { word: ctx.sel.slice(0, 400), reading: "", means: vi ? [vi] : [], kind: "sent", src };
+  const entry = { word: ctx.sel.slice(0, 400), reading: reading, means: vi ? [vi] : [], kind: "sent", src };
   try {
     await saveWord(entry, "javi");
     scheduleSync();

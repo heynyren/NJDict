@@ -1,7 +1,16 @@
-/* Tra Mazii — bản Android (Capacitor). Dùng chung dữ liệu & cơ chế đồng bộ với extension máy tính. */
+/**
+ * NJDict — bản Android (Capacitor).
+ *
+ * Dùng chung dữ liệu và cơ chế đồng bộ với extension máy tính; giao diện dựng
+ * bằng hệ thiết kế trong ui.css, icon Phosphor trong icons.js, phần theo dõi
+ * tiến độ & huy hiệu trong tien-do.js, thao tác vuốt/chạm trong cham-vuot.js.
+ */
 "use strict";
 
-// ================= Capacitor bridges (có fallback để chạy thử trên trình duyệt) =================
+/* ==================================================================== */
+/* Cầu nối Capacitor (có đường lui để chạy thử trên trình duyệt)         */
+/* ==================================================================== */
+
 const Cap = window.Capacitor || null;
 const Plugins = (Cap && Cap.Plugins) || {};
 
@@ -26,7 +35,7 @@ const Store = {
 };
 
 function getNativeHttp() {
-  // Capacitor 6 có thể để CapacitorHttp ở nhiều chỗ tuỳ cách nạp
+  // Capacitor có thể để CapacitorHttp ở nhiều chỗ tuỳ cách nạp.
   return (window.CapacitorHttp) || (Plugins && Plugins.CapacitorHttp) || (Cap && Cap.CapacitorHttp) || null;
 }
 
@@ -34,12 +43,8 @@ async function httpPostJson(url, bodyObj, contentType) {
   const ct = contentType || "application/json";
   const native = getNativeHttp();
   if (native && native.post) {
-    const r = await native.post({
-      url, headers: { "Content-Type": ct }, data: JSON.stringify(bodyObj)
-    });
-    if (r && typeof r.status === "number" && (r.status < 200 || r.status >= 300)) {
-      throw new Error("HTTP " + r.status);
-    }
+    const r = await native.post({ url, headers: { "Content-Type": ct }, data: JSON.stringify(bodyObj) });
+    if (r && typeof r.status === "number" && (r.status < 200 || r.status >= 300)) throw new Error("HTTP " + r.status);
     const d = r && r.data;
     if (typeof d === "string") { try { return JSON.parse(d); } catch (e) { throw new Error("Máy chủ trả về dữ liệu không đọc được"); } }
     return d;
@@ -86,7 +91,7 @@ async function speakJa(text) {
       await Plugins.TextToSpeech.speak({ text, lang: "ja-JP", rate: 0.9 });
       return;
     }
-  } catch (e) { /* thử fallback */ }
+  } catch (e) { /* thử đường lui */ }
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -95,7 +100,64 @@ async function speakJa(text) {
   } catch (e) { /* máy không có giọng Nhật */ }
 }
 
-// ================= Dữ liệu sổ tay (cùng cấu trúc extension) =================
+/* ==================================================================== */
+/* Tiện ích giao diện                                                   */
+/* ==================================================================== */
+
+const $ = (id) => document.getElementById(id);
+
+function el(tag, cls, chu) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (chu != null) e.textContent = chu;
+  return e;
+}
+
+/** Icon dạng phần tử DOM. */
+function ic(ten, opt) {
+  const s = document.createElement("span");
+  s.className = "icwrap";
+  s.innerHTML = window.Icon(ten, opt);
+  return s.firstChild || s;
+}
+
+/** Nút chỉ có icon. */
+function nutIcon(iconTen, title, cls, size) {
+  const b = el("button", "iconbtn" + (cls ? " " + cls : ""));
+  b.type = "button";
+  b.title = title || "";
+  b.appendChild(ic(iconTen, { size: size || 18 }));
+  return b;
+}
+
+/** Ô trạng thái giữa một thẻ: đang tra, không có kết quả, danh sách rỗng… */
+function trangThai(box, iconTen, chu, phu) {
+  box.className = "empty";
+  box.innerHTML = "";
+  box.appendChild(ic(iconTen, { size: 38, cls: iconTen === "spinner-gap" ? "spin" : "" }));
+  box.appendChild(el("div", null, chu));
+  if (phu) {
+    const p = el("div", "t-tiny faint", phu);
+    p.style.marginTop = "6px";
+    box.appendChild(p);
+  }
+}
+
+let toastTimer = null;
+function toast(chu, kieu) {
+  const t = $("toast");
+  t.className = "toast" + (kieu ? " " + kieu : "");
+  t.innerHTML = window.Icon(kieu === "bad" ? "warning-circle" : "check-circle", { size: 18, weight: "solid" });
+  t.appendChild(el("span", null, chu));
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3600);
+}
+
+/* ==================================================================== */
+/* Dữ liệu sổ tay (cùng cấu trúc với extension)                          */
+/* ==================================================================== */
+
 async function getNB() { return (await Store.get("notebook")) || {}; }
 async function setNB(nb) { await Store.set("notebook", nb); }
 async function getDecks() { return (await Store.get("decks")) || {}; }
@@ -109,7 +171,17 @@ function mergeByTs(a, b) {
   return out;
 }
 
-// ================= Hán Việt / Kanji =================
+// Nghĩa có thể bị lưu nhầm thành object (lỗi cũ) -> lấy lại phần chữ.
+function meanToStr(m) {
+  if (typeof m === "string") return m;
+  if (m && typeof m === "object") return m.text || m.mean || m.means || m.v || "";
+  return m == null ? "" : String(m);
+}
+
+/* ==================================================================== */
+/* Hán Việt / Kanji                                                     */
+/* ==================================================================== */
+
 function isCJK(ch) {
   const c = ch.codePointAt(0);
   return (c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3400 && c <= 0x4dbf) || (c >= 0xf900 && c <= 0xfaff);
@@ -133,11 +205,17 @@ function hanVietOf(word) {
   return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 }
 
-// ================= SRS (giống hệt extension) =================
+/* ==================================================================== */
+/* Sóng học tập (giống hệt extension)                                    */
+/* ==================================================================== */
+
 const SRS_STEPS = [1, 3, 7, 14, 30, 60, 120];
 const DAY = 86400000;
-// Đến hạn vào ĐẦU NGÀY mục tiêu (00:00), không phải đúng N×24 giờ sau —
-// để hôm sau mở app lúc nào cũng thấy từ, không bị "sáng ít, tối mới đủ".
+/** Cấp này trở lên (chu kỳ ≥ 14 ngày) coi như đã vào trí nhớ dài hạn. */
+const CAP_NHO_LAU = 3;
+
+// Đến hạn vào ĐẦU NGÀY mục tiêu (00:00), không phải đúng N×24 giờ sau — để hôm
+// sau mở app lúc nào cũng thấy mục, không bị "sáng ít, tối mới đủ".
 function dueInDays(days) {
   const d = new Date(Date.now() + days * DAY);
   d.setHours(0, 0, 0, 0);
@@ -160,13 +238,71 @@ async function gradeWord(key, remembered) {
   await setNB(nb);
 }
 function dueCountOn(list, dayOffset) {
-  // số từ đến hạn tính đến cuối ngày thứ dayOffset (0 = hôm nay)
+  // Số mục đến hạn tính đến cuối ngày thứ dayOffset (0 = hôm nay).
   const end = new Date(); end.setHours(23, 59, 59, 999);
   const t = end.getTime() + dayOffset * DAY;
   return list.filter((it) => !it.del && (!it.srs || !it.srs.due || it.srs.due <= t)).length;
 }
 
-// ================= Tra từ (API Mazii — như extension) =================
+/* ==================================================================== */
+/* Theo dõi tiến độ & huy hiệu                                          */
+/* ==================================================================== */
+
+/** Số liệu lấy từ sổ tay để xét huy hiệu. */
+async function soLieuSoTay() {
+  const nb = await getNB();
+  const a = Object.values(nb).filter((it) => !it.del);
+  const decks = await getDecks();
+  const now = Date.now();
+  let nhoLau = 0, daSua = 0, coGhiChu = 0, thich = 0, denHan = 0, trongChuKy = 0;
+  for (const it of a) {
+    if (it.srs && typeof it.srs.lv === "number" && it.srs.lv >= CAP_NHO_LAU) nhoLau += 1;
+    if (it.mEdit) daSua += 1;
+    if (it.note && it.note.trim()) coGhiChu += 1;
+    if (it.fav === 1) thich += 1;
+    if (isDue(it, now)) denHan += 1;
+    if (it.srs && it.srs.due) trongChuKy += 1;
+  }
+  const dung = new Set(a.map((it) => it.deck).filter((d) => d && decks[d] && !decks[d].del));
+  return { tong: a.length, nhoLau, daSua, coGhiChu, thich, denHan, trongChuKy, soCon: dung.size };
+}
+
+const theoDoi = window.TienDo.tao({
+  doc: async () => Store.get("hoc"),
+  ghi: async (d) => { await Store.set("hoc", d); },
+  soLieu: soLieuSoTay,
+  sauKhiGhi: () => syncSoon()
+});
+
+/** Hiện chúc mừng nếu vừa mở khoá huy hiệu. */
+function mung(ids, xong) {
+  if (!ids || !ids.length) { if (xong) xong(); return; }
+  window.TienDo.anMung(ids, () => {
+    veChuoiNgay();
+    if ($("viewProgress").classList.contains("show")) veTienDo();
+    if (xong) xong();
+  });
+}
+
+async function veTienDo() {
+  await window.TienDo.veBang($("progressBody"), theoDoi);
+}
+
+/** Chip chuỗi ngày trên thanh đầu — thứ nhìn thấy mỗi lần mở app. */
+async function veChuoiNgay() {
+  const view = await theoDoi.xem();
+  const chip = $("streakChip");
+  chip.innerHTML = window.Icon("fire", { size: 15, weight: view.homNay.dat ? "solid" : "line" });
+  chip.appendChild(el("span", null,
+    (view.chuoi.hienTai ? view.chuoi.hienTai + " ngày · " : "") + view.homNay.on + "/" + view.goal));
+  chip.style.display = "";
+  chip.onclick = () => show("Progress");
+}
+
+/* ==================================================================== */
+/* Tra từ (API Mazii — như extension)                                    */
+/* ==================================================================== */
+
 let lastLookupError = "";
 async function lookup(word, dict) {
   const payload = { dict, type: "word", query: word, limit: 20, page: 1 };
@@ -194,7 +330,10 @@ function normMeans(e) {
   return [];
 }
 
-// ================= Đồng bộ Drive (Apps Script — cùng payload với extension) =================
+/* ==================================================================== */
+/* Đồng bộ Drive (Apps Script — cùng payload với extension)              */
+/* ==================================================================== */
+
 let syncing = null;      // không cho hai lượt đồng bộ chạy chồng nhau
 function syncNow() {
   if (syncing) return syncing;
@@ -208,27 +347,46 @@ async function doSync() {
   const load = await httpPostJson(cfg.url, { token: cfg.token || "", action: "load" }, "text/plain;charset=utf-8");
   if (!load || load.ok === false) throw new Error((load && load.error) || "Lỗi máy chủ");
   const data = load.data || {};
-  let remoteNb, remoteDecks;
-  if (data && typeof data === "object" && data.notebook !== undefined) { remoteNb = data.notebook || {}; remoteDecks = data.decks || {}; }
-  else { remoteNb = data || {}; remoteDecks = {}; }
+  let remoteNb, remoteDecks, remoteHoc;
+  if (data && typeof data === "object" && data.notebook !== undefined) {
+    remoteNb = data.notebook || {}; remoteDecks = data.decks || {}; remoteHoc = data.hoc || null;
+  } else {
+    remoteNb = data || {}; remoteDecks = {}; remoteHoc = null;
+  }
   const mergedNb = mergeByTs(await getNB(), remoteNb);
   const mergedDecks = mergeByTs(await getDecks(), remoteDecks);
-  const save = await httpPostJson(cfg.url, { token: cfg.token || "", action: "save", data: { notebook: mergedNb, decks: mergedDecks } }, "text/plain;charset=utf-8");
+  // Tiến độ học trộn theo luật riêng — xem TienDo.tron().
+  const mergedHoc = window.TienDo.tron(await Store.get("hoc"), remoteHoc);
+
+  const save = await httpPostJson(cfg.url, {
+    token: cfg.token || "", action: "save",
+    data: { notebook: mergedNb, decks: mergedDecks, hoc: mergedHoc }
+  }, "text/plain;charset=utf-8");
   if (!save || save.ok === false) throw new Error((save && save.error) || "Lỗi khi lưu");
 
-  // Đọc lại NGAY TRƯỚC KHI GHI để không xoá mất thay đổi vừa làm trong lúc chờ mạng
+  // Đọc lại NGAY TRƯỚC KHI GHI để không xoá mất thay đổi vừa làm trong lúc chờ mạng.
   const finalNb = mergeByTs(await getNB(), mergedNb);
   const finalDecks = mergeByTs(await getDecks(), mergedDecks);
-  await setNB(finalNb); await setDecks(finalDecks);
-  if (JSON.stringify(finalNb) !== JSON.stringify(mergedNb)) syncSoon();
+  const finalHoc = window.TienDo.tron(await Store.get("hoc"), mergedHoc);
+  await setNB(finalNb); await setDecks(finalDecks); await Store.set("hoc", finalHoc);
+  theoDoi.dat(finalHoc);
+  if (JSON.stringify(finalNb) !== JSON.stringify(mergedNb) ||
+      JSON.stringify(finalHoc) !== JSON.stringify(mergedHoc)) syncSoon();
 
   let n = 0; for (const k in finalNb) if (!finalNb[k].del) n++;
   return n;
 }
-let syncTimer = null;
-function syncSoon() { clearTimeout(syncTimer); syncTimer = setTimeout(() => { syncNow().then(refreshNotifications).catch(() => {}); }, 2500); }
 
-// ================= Thông báo nhắc học =================
+let syncTimer = null;
+function syncSoon() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { syncNow().then(refreshNotifications).catch(() => {}); }, 2500);
+}
+
+/* ==================================================================== */
+/* Thông báo nhắc học                                                   */
+/* ==================================================================== */
+
 async function refreshNotifications() {
   const LN = Plugins.LocalNotifications;
   if (!LN) return;
@@ -237,10 +395,10 @@ async function refreshNotifications() {
   try {
     const perm = await LN.checkPermissions();
     if (perm.display !== "granted") { const r = await LN.requestPermissions(); if (r.display !== "granted") return; }
-    // xoá lịch cũ (id 1..7)
-    await LN.cancel({ notifications: [1,2,3,4,5,6,7].map((id) => ({ id })) });
+    await LN.cancel({ notifications: [1, 2, 3, 4, 5, 6, 7].map((id) => ({ id })) });
     const nb = await getNB();
     const list = Object.values(nb);
+    const view = await theoDoi.xem();
     const [hh, mm] = (cfg.time || "20:00").split(":").map(Number);
     const notis = [];
     for (let d = 0; d < 7; d++) {
@@ -248,10 +406,15 @@ async function refreshNotifications() {
       if (at.getTime() <= Date.now()) continue;
       const n = dueCountOn(list, d);
       if (n <= 0) continue;
+      // Nhắc kèm chuỗi ngày: "mất chuỗi 12 ngày" là lý do đứng dậy học mạnh hơn
+      // nhiều so với "có 8 từ đến hạn".
+      const chuoi = d === 0 && view.chuoi.hienTai > 0 && !view.homNay.dat
+        ? " Chuỗi " + view.chuoi.hienTai + " ngày đang chờ bạn."
+        : "";
       notis.push({
         id: d + 1,
-        title: "Đến giờ ôn từ vựng 🎓",
-        body: "Hôm nay có " + n + " từ đến hạn trong sóng học tập. Vào ôn " + (n <= 5 ? "vài phút là xong!" : "nhé!"),
+        title: "Đến giờ ôn từ vựng",
+        body: "Hôm nay có " + n + " mục đến hạn." + chuoi,
         schedule: { at }
       });
     }
@@ -259,27 +422,86 @@ async function refreshNotifications() {
   } catch (e) { /* bỏ qua */ }
 }
 
-// ================= UI chung =================
-const $ = (id) => document.getElementById(id);
-function show(view) {
-  ["Lookup", "Notebook", "Study"].forEach((v) => {
-    $("view" + v).classList.toggle("show", v === view);
+/* ==================================================================== */
+/* Chuyển màn + thao tác vuốt chạm                                      */
+/* ==================================================================== */
+
+const MAN = ["Lookup", "Notebook", "Study", "Progress"];
+let manHienTai = "Lookup";
+/** Chồng màn đã đi qua, để nút Quay lại của Android lùi từng bước. */
+const lichSu = ["Lookup"];
+
+function show(view, huong) {
+  const tu = MAN.indexOf(manHienTai);
+  const den = MAN.indexOf(view);
+  const chieu = huong != null ? huong : (den > tu ? 1 : -1);
+
+  MAN.forEach((v) => {
+    const sec = $("view" + v);
+    sec.classList.toggle("show", v === view);
+    sec.classList.remove("slide-l", "slide-r");
     $("nav" + v).classList.toggle("active", v === view);
   });
+  if (view !== manHienTai) {
+    // Nội dung trôi vào từ đúng phía mình vừa vuốt — không có cái này thì đổi
+    // tab bị "nháy" một cái, không ra cảm giác đang lật trang.
+    $("view" + view).classList.add(chieu > 0 ? "slide-l" : "slide-r");
+    // Quay lại một màn đã ở trong chồng thì cắt bớt thay vì chất thêm, để đi
+    // tới đi lui vài lần không sinh ra một chồng dài vô tận.
+    const cu = lichSu.indexOf(view);
+    if (cu >= 0) lichSu.length = cu + 1; else lichSu.push(view);
+  }
+  manHienTai = view;
+  $("scroller").scrollTop = 0;
+  veNav();
+
   if (view === "Notebook") { drawNotebook(); pullAndRefresh(); }
   if (view === "Study") { updateDueButton(); pullAndRefresh(); }
+  if (view === "Progress") { veTienDo(); pullAndRefresh(); }
 }
-$("navLookup").addEventListener("click", () => show("Lookup"));
-$("navNotebook").addEventListener("click", () => show("Notebook"));
-$("navStudy").addEventListener("click", () => show("Study"));
 
-// ================= View: Tra từ =================
+MAN.forEach((v) => { $("nav" + v).addEventListener("click", () => show(v)); });
+
+/** Vẽ lại icon thanh tab: tab đang mở dùng icon đặc. */
+function veNav() {
+  const bo = { Lookup: "magnifying-glass", Notebook: "notebook", Study: "graduation-cap", Progress: "chart-line-up" };
+  MAN.forEach((v) => {
+    const b = $("nav" + v);
+    const on = b.classList.contains("active");
+    b.querySelector(".i").innerHTML = window.Icon(bo[v], { size: 22, weight: on ? "solid" : "line" });
+  });
+}
+
+/* --- vuốt ngang đổi tab --- */
+window.ChamVuot.vuotDoiTab(
+  () => MAN.indexOf(manHienTai),
+  () => MAN.length,
+  (toi) => show(MAN[toi], toi > MAN.indexOf(manHienTai) ? 1 : -1)
+);
+
+/* --- nút Quay lại của Android --- */
+window.ChamVuot.nutQuayLai(() => {
+  // Có gì đang mở đè lên thì đóng cái đó trước, đúng như người ta mong đợi.
+  const phu = document.querySelector(".celebrate.show, .sheet.show");
+  if (phu) { phu.classList.remove("show"); return true; }
+  if (session.queue.length && $("stBody").style.display !== "none") { ketThucSom(); return true; }
+  if (lichSu.length > 1) {
+    lichSu.pop();
+    show(lichSu[lichSu.length - 1], -1);
+    return true;
+  }
+  return false;   // đang ở màn gốc rồi thì mới thật sự thoát
+});
+
+/* ==================================================================== */
+/* Màn Tra từ                                                           */
+/* ==================================================================== */
+
 let lastEntries = [];
-let currentSrc = null;   // nguồn (URL+tiêu đề+đoạn chọn) của lượt tra hiện tại, để lưu kèm khi bấm ＋Lưu
+let currentSrc = null;   // nguồn của lượt tra hiện tại, để lưu kèm khi bấm Lưu
+
 function switchSub(name) {
-  if (name === true) name = "word";
-  if (name === false) name = "kanji";
-  ["word","kanji","trans"].forEach((n) => {
+  ["word", "kanji", "trans"].forEach((n) => {
     const btn = { word: "tabWord", kanji: "tabKanji", trans: "tabTrans" }[n];
     const pane = { word: "result", kanji: "kanji", trans: "trans" }[n];
     $(btn).classList.toggle("active", n === name);
@@ -297,11 +519,11 @@ async function runLookup(word, src) {
   if (!w) return;
   $("q").value = w;
   if (w.length > 30 || /[。．！？\n]/.test(w)) { switchSub("trans"); return; }   // là câu -> dịch cả câu
+  switchSub("word");
   const chars = extractKanji(w);
-  $("tabKanji").textContent = "Hán tự" + (chars.length ? " (" + chars.length + ")" : "");
+  $("tabKanji").querySelector(".lb").textContent = "Hán tự" + (chars.length ? " " + chars.length : "");
   renderKanji(chars);
-  $("result").className = "state";
-  $("result").textContent = "Đang tra “" + w + "”…";
+  trangThai($("result"), "spinner-gap", "Đang tra “" + w + "”…");
   const entries = await lookup(w, $("dir").value);
   lastEntries = entries;
   await renderWord(entries);
@@ -310,46 +532,92 @@ $("go").addEventListener("click", () => runLookup($("q").value));
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") runLookup($("q").value); });
 $("dir").addEventListener("change", () => runLookup($("q").value));
 $("paste").addEventListener("click", async () => {
-  try { const t = await navigator.clipboard.readText(); if (t && t.trim()) runLookup(t.trim()); } catch (e) { alert("Không đọc được bộ nhớ tạm. Hãy dán tay vào ô tra."); }
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t && t.trim()) runLookup(t.trim());
+  } catch (e) { toast("Không đọc được bộ nhớ tạm. Hãy dán tay vào ô tra.", "bad"); }
 });
+
+/** Nút Lưu dùng chung cho tab Từ vựng và tab Dịch. */
+function nutLuu(daLuu, khiLuu) {
+  const b = el("button", "btn xs");
+  b.type = "button";
+  const danhDau = () => {
+    b.className = "btn xs";
+    b.style.color = "var(--good)";
+    b.style.borderColor = "var(--good-soft)";
+    b.style.background = "var(--good-soft)";
+    b.innerHTML = window.Icon("check", { size: 15 }) + '<span class="lb">Đã lưu</span>';
+    b.onclick = null;
+  };
+  if (daLuu) danhDau();
+  else {
+    b.className = "btn xs tinted";
+    b.innerHTML = window.Icon("plus", { size: 15 }) + '<span class="lb">Lưu</span>';
+    b.addEventListener("click", async () => { await khiLuu(); danhDau(); });
+  }
+  return b;
+}
 
 async function renderWord(entries) {
   const box = $("result");
   const nb = await getNB();
   const srcSnap = (currentSrc && currentSrc.url) ? currentSrc : null;   // giữ nguồn của lượt tra này
-  box.className = ""; box.innerHTML = "";
-  if (!entries.length) { box.className = "state"; box.innerHTML = ""; const p1 = document.createElement("div"); p1.textContent = "Không lấy được nghĩa."; box.appendChild(p1); if (lastLookupError) { const p2 = document.createElement("div"); p2.className = "hint"; p2.style.marginTop = "6px"; p2.textContent = "Chi tiết: " + lastLookupError; box.appendChild(p2); } const p3 = document.createElement("div"); p3.className = "hint"; p3.style.marginTop = "6px"; p3.textContent = getNativeHttp() ? "" : "(Đang dùng chế độ trình duyệt — bản APK sẽ gọi mạng kiểu native.)"; if (p3.textContent) box.appendChild(p3); return; }
+
+  if (!entries.length) {
+    trangThai(box, "warning-circle", "Không lấy được nghĩa.",
+      (lastLookupError ? "Chi tiết: " + lastLookupError + ". " : "")
+      + (getNativeHttp() ? "" : "(Đang chạy chế độ trình duyệt — bản APK gọi mạng kiểu native.)"));
+    return;
+  }
+
+  box.className = "entrylist";
+  box.innerHTML = "";
   for (const en of entries) {
-    const div = document.createElement("div"); div.className = "entry";
-    const head = document.createElement("div"); head.className = "ehead";
-    const left = document.createElement("div");
-    const w = document.createElement("span"); w.className = "word"; w.textContent = en.word; left.appendChild(w);
-    const spk = document.createElement("button"); spk.className = "spk"; spk.textContent = "🔊";
-    spk.addEventListener("click", () => speakJa(en.word)); left.appendChild(spk);
-    if (en.reading) { const r = document.createElement("span"); r.className = "read"; r.textContent = en.reading; left.appendChild(r); }
-    head.appendChild(left);
-    const btn = document.createElement("button"); btn.className = "save";
-    const key = $("dir").value + ":" + en.word;
-    if (nb[key] && !nb[key].del) { btn.textContent = "✓ Đã lưu"; btn.classList.add("saved"); }
-    else {
-      btn.textContent = "＋ Lưu";
-      btn.addEventListener("click", async () => {
-        const nb2 = await getNB();
-        const old2 = nb2[key];
-        const ne2 = { word: en.word, reading: en.reading || "", means: en.means || [], dict: $("dir").value, ts: Date.now() };
-        if (srcSnap) ne2.src = srcSnap;
-        if (old2 && !old2.del) { if (old2.deck) ne2.deck = old2.deck; if (old2.srs) ne2.srs = old2.srs; if (old2.kind) ne2.kind = old2.kind; if (old2.src && !ne2.src) ne2.src = old2.src; }
-        nb2[key] = ne2;
-        await setNB(nb2);
-        btn.textContent = "✓ Đã lưu"; btn.classList.add("saved");
-        syncSoon(); refreshNotifications();
-      });
+    const div = el("div", "item");
+    const head = el("div", "rowx between");
+    head.style.alignItems = "flex-start";
+
+    const left = el("div");
+    const w = el("span", "w ja", en.word);
+    left.appendChild(w);
+    const spk = nutIcon("speaker-high", "Phát âm", "", 19);
+    spk.addEventListener("click", () => speakJa(en.word));
+    left.appendChild(spk);
+    if (en.reading) {
+      const r = el("span", "r", en.reading);
+      r.style.marginLeft = "4px";
+      left.appendChild(r);
     }
-    head.appendChild(btn);
+    head.appendChild(left);
+
+    const key = $("dir").value + ":" + en.word;
+    head.appendChild(nutLuu(nb[key] && !nb[key].del, async () => {
+      const nb2 = await getNB();
+      const old2 = nb2[key];
+      const ne2 = { word: en.word, reading: en.reading || "", means: en.means || [], dict: $("dir").value, ts: Date.now() };
+      if (srcSnap) ne2.src = srcSnap;
+      // Lưu lại một mục đã có -> GIỮ phân loại, tiến độ học, ghi chú và bản dịch
+      // bạn đã sửa. Nếu không thì mỗi lần tra lại là mất sạch công hiệu đính.
+      if (old2 && !old2.del) {
+        if (old2.deck) ne2.deck = old2.deck;
+        if (old2.srs) ne2.srs = old2.srs;
+        if (old2.kind) ne2.kind = old2.kind;
+        if (old2.fav) ne2.fav = old2.fav;
+        if (old2.note) ne2.note = old2.note;
+        if (old2.src && !ne2.src) ne2.src = old2.src;
+        if (old2.mEdit) { ne2.mEdit = 1; ne2.means = old2.means; ne2.mOrig = old2.mOrig; }
+      }
+      nb2[key] = ne2;
+      await setNB(nb2);
+      if (!old2 || old2.del) mung(await theoDoi.ghiLuu(1));
+      syncSoon(); refreshNotifications();
+    }));
+
     div.appendChild(head);
     if (en.means.length) {
-      const ul = document.createElement("ul"); ul.className = "mean";
-      en.means.slice(0, 6).forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
+      const ul = document.createElement("ul");
+      en.means.slice(0, 6).forEach((m) => ul.appendChild(el("li", null, m)));
       div.appendChild(ul);
     }
     box.appendChild(div);
@@ -358,16 +626,17 @@ async function renderWord(entries) {
 
 function renderKanji(chars) {
   const box = $("kanji");
-  box.innerHTML = "";
-  if (!chars.length) { box.className = "state"; box.textContent = "Từ này không có Hán tự."; return; }
+  if (!chars.length) { trangThai(box, "text-aa", "Từ này không có Hán tự."); return; }
   box.className = "";
+  box.innerHTML = "";
   const DB = window.KANJI || {};
   for (const ch of chars) {
     const d = DB[ch];
-    const row = document.createElement("div"); row.className = "kentry";
-    const c = document.createElement("div"); c.className = "kchar"; c.textContent = ch; row.appendChild(c);
-    const main = document.createElement("div");
-    const hv = document.createElement("div"); hv.className = "khv"; hv.textContent = d && d.hv ? d.hv : "—"; main.appendChild(hv);
+    const row = el("div", "kentry");
+    row.appendChild(el("div", "kchar", ch));
+    const main = el("div");
+    main.style.minWidth = "0";
+    main.appendChild(el("div", "khv", d && d.hv ? d.hv : "—"));
     if (d) {
       const bits = [];
       if (d.on) bits.push("On: " + d.on);
@@ -375,10 +644,11 @@ function renderKanji(chars) {
       if (d.s) bits.push(d.s + " nét");
       if (d.jlpt) bits.push("N" + d.jlpt);
       if (d.rad) bits.push("Bộ: " + d.rad);
-      if (bits.length) { const meta = document.createElement("div"); meta.className = "kmeta"; meta.textContent = bits.join(" · "); main.appendChild(meta); }
+      if (bits.length) main.appendChild(el("div", "kmeta", bits.join(" · ")));
       if (d.m && d.m.length) {
-        const ul = document.createElement("ul"); ul.className = "kmean";
-        d.m.slice(0, 6).forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
+        const ul = document.createElement("ul");
+        ul.className = "kmean";
+        d.m.slice(0, 6).forEach((m) => ul.appendChild(el("li", null, m)));
         main.appendChild(ul);
       }
     }
@@ -387,8 +657,10 @@ function renderKanji(chars) {
   }
 }
 
+/* ==================================================================== */
+/* Dịch câu                                                             */
+/* ==================================================================== */
 
-// ================= Dịch câu (Google Dịch qua Apps Script) =================
 async function translateText(text) {
   const t = (text || "").trim();
   if (!t) throw new Error("Chưa có nội dung");
@@ -416,75 +688,192 @@ async function translateText(text) {
 
 async function showTranslate(text) {
   const box = $("trans");
+  if (!text) { trangThai(box, "translate", "Nhập hoặc dán đoạn cần dịch."); return; }
   const srcSnap = (currentSrc && currentSrc.url) ? { url: currentSrc.url, title: currentSrc.title, sel: text } : null;
-  box.className = "state"; box.textContent = "Đang dịch…";
+  trangThai(box, "spinner-gap", "Đang dịch…");
   try {
     const res = await translateText(text);
     const out = res.text, reading = res.reading || "";
-    box.className = "trbox"; box.innerHTML = "";
-    const hd = document.createElement("div"); hd.className = "hd";
-    const tr = document.createElement("div"); tr.className = "tr"; tr.textContent = out;
-    hd.appendChild(tr);
-    const sv = document.createElement("button"); sv.className = "save"; sv.textContent = "＋ Lưu";
+    box.className = "trbox";
+    box.innerHTML = "";
+
+    const hd = el("div", "rowx between");
+    hd.style.alignItems = "flex-start";
+    hd.appendChild(el("div", "tr grow", out));
+
     const key = "javi:" + text;
     const nb0 = await getNB();
-    if (nb0[key] && !nb0[key].del) { sv.textContent = "✓ Đã lưu"; sv.classList.add("saved"); }
-    else sv.addEventListener("click", async () => {
+    hd.appendChild(nutLuu(nb0[key] && !nb0[key].del, async () => {
       const nb = await getNB();
       const oldS = nb[key];
       const neS = { word: text, reading: reading, means: [out], dict: "javi", kind: "sent", ts: Date.now() };
       if (srcSnap) neS.src = srcSnap;
-      if (oldS && !oldS.del) { if (oldS.deck) neS.deck = oldS.deck; if (oldS.srs) neS.srs = oldS.srs; if (oldS.src && !neS.src) neS.src = oldS.src; }
+      if (oldS && !oldS.del) {
+        if (oldS.deck) neS.deck = oldS.deck;
+        if (oldS.srs) neS.srs = oldS.srs;
+        if (oldS.fav) neS.fav = oldS.fav;
+        if (oldS.note) neS.note = oldS.note;
+        if (oldS.src && !neS.src) neS.src = oldS.src;
+        if (oldS.mEdit) { neS.mEdit = 1; neS.means = oldS.means; neS.mOrig = oldS.mOrig; }
+      }
       nb[key] = neS;
       await setNB(nb);
-      sv.textContent = "✓ Đã lưu"; sv.classList.add("saved");
+      if (!oldS || oldS.del) mung(await theoDoi.ghiLuu(1));
       syncSoon(); refreshNotifications();
-    });
-    hd.appendChild(sv);
+      toast("Đã lưu — sang Sổ tay để sửa bản dịch cho đúng chuyên ngành");
+    }));
     box.appendChild(hd);
-    if (reading) { const rd = document.createElement("div"); rd.className = "furi"; rd.textContent = "🗣 " + reading; box.appendChild(rd); }
-    const src = document.createElement("div"); src.className = "src"; src.textContent = text;
-    box.appendChild(src);
+
+    if (reading) {
+      const rd = el("div", "furi");
+      rd.appendChild(ic("speaker-high", { size: 15 }));
+      rd.appendChild(el("span", null, reading));
+      box.appendChild(rd);
+    }
+    box.appendChild(el("div", "src", text));
   } catch (e) {
-    box.className = "state"; box.textContent = (e && e.message) || "Không dịch được.";
+    trangThai(box, "warning-circle", (e && e.message) || "Không dịch được.");
   }
 }
 
-// ================= View: Sổ tay =================
+/* ==================================================================== */
+/* Sửa bản dịch / ghi chú                                               */
+/* ==================================================================== */
+
+/**
+ * Vì sao cần sửa bản dịch
+ * -----------------------
+ * Nghĩa trong sổ đến từ máy dịch, mà máy dịch không biết bạn đang đọc tài liệu
+ * ngành nào. 開閉器 ra "công tắc" thì không sai với người thường, nhưng người
+ * làm điện phải gọi là "thiết bị đóng cắt". Bản dịch sai chuyên ngành mà cứ ôn
+ * đi ôn lại thì càng ôn càng nhớ sai.
+ *
+ * Bản gốc của máy được cất vào `mOrig` chứ không xoá, để lúc nào muốn so lại
+ * hoặc thấy mình sửa hỏng thì còn đường quay về.
+ */
+let dangSua = null;
+
+function moSua(it, tab) {
+  dangSua = { key: it.key };
+  const laGhiChu = tab === "note";
+  $("edTitle").textContent = laGhiChu ? "Ghi chú cho mục này" : "Sửa bản dịch";
+  $("edIcon").innerHTML = window.Icon(laGhiChu ? "note-pencil" : "translate", { size: 20 });
+  $("edSub").textContent = laGhiChu
+    ? "Ghi lại ngữ cảnh, thuật ngữ tương đương, cách dùng — thứ mà từ điển không nói."
+    : "Chỉnh lại cho đúng cách nói của chuyên ngành bạn. Mỗi dòng là một nghĩa.";
+  $("edOrig").textContent = it.word || "";
+  $("edTrans").value = (it.means || []).join("\n");
+  $("edNote").value = it.note || "";
+  const goc = it.mOrig && it.mOrig.length ? it.mOrig.join("; ") : "";
+  $("edOrigHint").textContent = goc ? "Bản máy dịch ban đầu: " + goc : "";
+  $("edRestore").style.display = goc ? "" : "none";
+  $("editSheet").classList.add("show");
+  setTimeout(() => $(laGhiChu ? "edNote" : "edTrans").focus(), 60);
+}
+
+function dongSua() { $("editSheet").classList.remove("show"); dangSua = null; }
+
+async function luuSua() {
+  if (!dangSua) return;
+  const nb = await getNB();
+  const e = nb[dangSua.key];
+  if (!e || e.del) { dongSua(); return; }
+
+  const dong = $("edTrans").value.split("\n").map((x) => x.trim()).filter(Boolean);
+  const ghiChu = $("edNote").value.trim();
+  const cu = (e.means || []).map(meanToStr);
+  const doiNghia = dong.join("\n") !== cu.join("\n");
+
+  const ne = Object.assign({}, e, { ts: Date.now() });
+  if (doiNghia) {
+    // Cất bản gốc lại đúng MỘT lần: lần sửa thứ hai không được đè bản gốc bằng
+    // chính bản sửa lần trước, nếu không nút khôi phục thành vô nghĩa.
+    if (!ne.mOrig) ne.mOrig = cu;
+    ne.means = dong;
+    ne.mEdit = 1;
+  }
+  if (ghiChu) ne.note = ghiChu; else delete ne.note;
+
+  nb[dangSua.key] = ne;
+  await setNB(nb);
+  dongSua();
+  drawNotebook();
+  if (session.queue.length && session.queue[0] && session.queue[0].key === ne.key) {
+    Object.assign(session.queue[0], ne);
+    showCard(true);
+  }
+  syncSoon();
+  mung(await theoDoi.xetHuyHieu());
+  toast(doiNghia ? "Đã lưu bản dịch của bạn" : "Đã lưu ghi chú");
+}
+
+$("edSave").addEventListener("click", luuSua);
+$("edCancel").addEventListener("click", dongSua);
+$("edRestore").addEventListener("click", async () => {
+  if (!dangSua) return;
+  const nb = await getNB();
+  const e = nb[dangSua.key];
+  if (e && e.mOrig) $("edTrans").value = e.mOrig.join("\n");
+});
+$("editSheet").addEventListener("click", (e) => { if (e.target.id === "editSheet") dongSua(); });
+
+/* ==================================================================== */
+/* Màn Sổ tay                                                           */
+/* ==================================================================== */
+
 const ALL = "__all__", NONE = "__none__";
-const LIKE = "__like__", DISLIKE = "__dislike__";   // 2 nhãn cố định: Thích / Không thích
+const LIKE = "__like__", DISLIKE = "__dislike__";
 let curDeck = ALL;
 
-// Gắn/bỏ nhãn Thích(1)/Không thích(-1). Bấm lại nút đang bật -> về bình thường.
-// Chỉ đổi fav + ts (đồng bộ tự chạy qua mergeByTs), KHÔNG đụng tiến độ học.
+function dirLabel(d) { return d === "vija" ? "Việt→Nhật" : "Nhật→Việt"; }
+function deckName(decks, id) { const d = decks[id]; return d && !d.del ? d.name : null; }
+
 async function setFav(key, val) {
   const nb = await getNB(); const e = nb[key];
-  if (!e || e.del) return;
+  if (!e || e.del) return 0;
   const next = (e.fav === val) ? 0 : val;
   const ne = Object.assign({}, e, { ts: Date.now() });
   if (next) ne.fav = next; else delete ne.fav;
-  nb[key] = ne; await setNB(nb); drawNotebook(); syncSoon();
+  nb[key] = ne; await setNB(nb); syncSoon();
+  return next;
 }
-function favButtons(it) {
-  const wrap = document.createElement("span"); wrap.className = "favctl";
-  const like = document.createElement("button");
-  like.className = "favbtn like" + (it.fav === 1 ? " on" : "");
-  like.textContent = it.fav === 1 ? "❤️" : "🤍";
-  like.title = it.fav === 1 ? "Bỏ khỏi Thích" : "Thích";
-  like.addEventListener("click", (e) => { e.stopPropagation(); setFav(it.key, 1); });
-  const dis = document.createElement("button");
-  dis.className = "favbtn dislike" + (it.fav === -1 ? " on" : "");
-  dis.textContent = "👎";
-  dis.title = it.fav === -1 ? "Bỏ khỏi Không thích" : "Không thích";
-  dis.addEventListener("click", (e) => { e.stopPropagation(); setFav(it.key, -1); });
-  wrap.appendChild(like); wrap.appendChild(dis);
+
+function favButtons(it, sauDo) {
+  const wrap = el("span", "rowx");
+  wrap.style.gap = "0";
+  const mk = (val, iconTen, cls, ten) => {
+    const on = it.fav === val;
+    const b = el("button", "iconbtn " + cls + (on ? " on" : ""));
+    b.type = "button";
+    b.title = on ? "Bỏ khỏi " + ten : ten;
+    // Đang bật thì dùng icon đặc, tắt thì icon nét — nhìn là biết ngay trạng
+    // thái mà không cần đọc màu.
+    b.innerHTML = window.Icon(iconTen, { size: 18, weight: on ? "solid" : "line" });
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      it.fav = await setFav(it.key, val);
+      if (sauDo) sauDo(); else drawNotebook();
+    });
+    return b;
+  };
+  wrap.appendChild(mk(1, "heart", "like", "Thích"));
+  wrap.appendChild(mk(-1, "thumbs-down", "dislike", "Không thích"));
   return wrap;
 }
-function deckName(decks, id) { const d = decks[id]; return d && !d.del ? d.name : null; }
 
-// Mở lại trang nguồn của từ/câu trong trình duyệt hệ thống; đính kèm Text Fragment
-// (#:~:text=…) để Chrome tự cuộn tới và tô sáng đúng vị trí đã lưu. Dùng prefix/suffix
-// để khớp đúng chỗ; đoạn dài thì neo "6 từ đầu … 6 từ cuối".
+/** Khối ghi chú riêng, hiện dưới phần nghĩa. */
+function khoiGhiChu(chu) {
+  const box = el("div", "mynote");
+  const h = el("div", "nh");
+  h.appendChild(ic("note-pencil", { size: 13 }));
+  h.appendChild(el("span", null, "Ghi chú của bạn"));
+  box.appendChild(h);
+  box.appendChild(el("div", null, chu));
+  return box;
+}
+
+// Mở lại trang nguồn trong trình duyệt hệ thống; đính kèm Text Fragment
+// (#:~:text=…) để Chrome tự cuộn tới và tô sáng đúng vị trí đã lưu.
 function buildTextFragment(src) {
   const s = (src.sel || "").replace(/\s+/g, " ").trim();
   if (!s) return "";
@@ -534,106 +923,147 @@ async function addLink(it) {
   syncSoon();
 }
 
-// Toast ngắn báo trạng thái (dùng khi chia sẻ không kèm link).
-function toast(msg) {
-  let t = document.getElementById("njToast");
-  if (!t) { t = document.createElement("div"); t.id = "njToast"; document.body.appendChild(t); }
-  t.textContent = msg;
-  t.className = "show";
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => { t.className = ""; }, 4000);
-}
-
-// Nghĩa có thể bị lưu nhầm thành object (lỗi cũ) -> lấy lại phần chữ.
-function meanToStr(m) {
-  if (typeof m === "string") return m;
-  if (m && typeof m === "object") return m.text || m.mean || m.means || m.v || "";
-  return m == null ? "" : String(m);
-}
 async function drawNotebook() {
   const nb = await getNB(), decks = await getDecks();
-  // Khôi phục các mục cũ bị lưu nghĩa dạng object ("[object Object]") -> chuỗi, rồi lưu lại.
-  let __fx = false;
-  for (const k in nb) { const e = nb[k]; if (e && Array.isArray(e.means)) { const nm = e.means.map(meanToStr); if (nm.some((v, i) => v !== e.means[i])) { e.means = nm; __fx = true; } } }
-  if (__fx) { await setNB(nb); syncSoon(); }
+  // Khôi phục các mục cũ bị lưu nghĩa dạng object ("[object Object]") -> chuỗi.
+  let fx = false;
+  for (const k in nb) {
+    const e = nb[k];
+    if (e && Array.isArray(e.means)) {
+      const nm = e.means.map(meanToStr);
+      if (nm.some((v, i) => v !== e.means[i])) { e.means = nm; fx = true; }
+    }
+  }
+  if (fx) { await setNB(nb); syncSoon(); }
+
   const items = Object.entries(nb).map(([key, v]) => ({ key, ...v })).sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const activeItems = items.filter((it) => !it.del);
   if (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE && !deckName(decks, curDeck)) curDeck = ALL;
 
-  // deck bar
-  const bar = $("deckBar"); bar.innerHTML = "";
+  /* --- hàng chip sổ con --- */
+  const bar = $("deckBar");
+  bar.innerHTML = "";
   const activeDecks = Object.values(decks).filter((d) => !d.del).sort((a, b) => (a.ts || 0) - (b.ts || 0));
   const countIn = (id) => id === ALL ? activeItems.length
     : id === NONE ? activeItems.filter((i) => !i.deck).length
     : id === LIKE ? activeItems.filter((i) => i.fav === 1).length
     : id === DISLIKE ? activeItems.filter((i) => i.fav === -1).length
     : activeItems.filter((i) => i.deck === id).length;
-  const mk = (id, label) => {
-    const b = document.createElement("button"); b.className = "chip" + (curDeck === id ? " active" : "");
-    b.textContent = label + " (" + countIn(id) + ")";
+  const mk = (id, label, iconTen) => {
+    const b = el("button", "chip" + (curDeck === id ? " active" : ""));
+    b.type = "button";
+    b.appendChild(ic(iconTen, { size: 15, weight: curDeck === id ? "solid" : "line" }));
+    b.appendChild(el("span", null, label));
+    b.appendChild(el("span", "n", String(countIn(id))));
     b.addEventListener("click", () => { curDeck = id; drawNotebook(); });
     bar.appendChild(b);
   };
-  mk(ALL, "Tất cả"); mk(NONE, "Chưa phân loại");
-  mk(LIKE, "❤️ Thích"); mk(DISLIKE, "👎 Không thích");
-  activeDecks.forEach((d) => mk(d.id, d.name));
-  const add = document.createElement("button"); add.className = "chip add"; add.textContent = "＋ Sổ mới";
+  mk(ALL, "Tất cả", "list-bullets");
+  mk(NONE, "Chưa phân loại", "funnel");
+  mk(LIKE, "Thích", "heart");
+  mk(DISLIKE, "Không thích", "thumbs-down");
+  activeDecks.forEach((d) => mk(d.id, d.name, "folder-simple"));
+
+  const add = el("button", "chip add");
+  add.type = "button";
+  add.appendChild(ic("folder-plus", { size: 15 }));
+  add.appendChild(el("span", null, "Sổ mới"));
   add.addEventListener("click", async () => {
-    const name = (prompt("Tên sổ con mới:") || "").trim(); if (!name) return;
+    const name = (prompt("Tên sổ con mới:") || "").trim();
+    if (!name) return;
     const d = await getDecks();
     const id = "d_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     d[id] = { id, name, ts: Date.now() };
     await setDecks(d); curDeck = id; drawNotebook(); syncSoon();
   });
   bar.appendChild(add);
-  $("deckActions").style.display = (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE) ? "" : "none";
+  $("deckActions").style.display =
+    (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE) ? "" : "none";
 
-  // list
+  /* --- danh sách --- */
   const kw = $("filter").value.trim().toLowerCase();
   let rows = activeItems;
   if (curDeck === NONE) rows = rows.filter((i) => !i.deck);
   else if (curDeck === LIKE) rows = rows.filter((i) => i.fav === 1);
   else if (curDeck === DISLIKE) rows = rows.filter((i) => i.fav === -1);
   else if (curDeck !== ALL) rows = rows.filter((i) => i.deck === curDeck);
-  if (kw) rows = rows.filter((it) => (it.word + " " + (it.reading || "") + " " + (it.means || []).join(" ")).toLowerCase().includes(kw));
-  $("nbCount").textContent = "Hiện: " + rows.length + " từ";
-
-  const list = $("nbList"); list.innerHTML = "";
-  if (!rows.length) {
-    const d = document.createElement("div"); d.className = "state";
-    d.textContent = activeItems.length ? "Không có từ trong mục này." : "Chưa có từ nào. Sang tab Tra từ và bấm ＋ Lưu.";
-    list.appendChild(d); return;
+  if (kw) {
+    rows = rows.filter((it) =>
+      (it.word + " " + (it.reading || "") + " " + (it.means || []).join(" ") + " " + (it.note || ""))
+        .toLowerCase().includes(kw));
   }
+  $("nbCount").textContent = "Đang hiện " + rows.length + " mục"
+    + (rows.length !== activeItems.length ? " trong " + activeItems.length : "");
+
+  const list = $("nbList");
+  list.innerHTML = "";
+  if (!rows.length) {
+    const d = el("div", "empty");
+    d.appendChild(ic("notebook", { size: 38 }));
+    d.appendChild(el("div", null, activeItems.length
+      ? "Không có mục nào ở đây."
+      : "Chưa có mục nào. Sang tab Tra từ và bấm Lưu."));
+    list.appendChild(d);
+    return;
+  }
+
   const now = Date.now();
   for (const it of rows) {
-    const row = document.createElement("div"); row.className = "nrow" + (it.kind === "sent" ? " sent" : "");
-    const main = document.createElement("div"); main.className = "main";
-    const head = document.createElement("div");
-    const w = document.createElement("span"); w.className = "w"; w.textContent = it.word; head.appendChild(w);
-    const spk = document.createElement("button"); spk.className = "spk"; spk.textContent = "🔊";
-    spk.addEventListener("click", () => speakJa(it.word)); head.appendChild(spk);
-    if (it.reading) { const r = document.createElement("span"); r.className = "r"; r.textContent = it.reading; head.appendChild(r); }
-    head.appendChild(favButtons(it));
-    if (isDue(it, now)) { const du = document.createElement("span"); du.className = "due"; du.textContent = "đến hạn"; head.appendChild(du); }
-    main.appendChild(head);
-    const hvS = hanVietOf(it.word);
-    if (hvS) { const hv = document.createElement("div"); hv.className = "hv"; hv.textContent = "Hán Việt: " + hvS; main.appendChild(hv); }
-    if (it.means && it.means.length) { const m = document.createElement("div"); m.className = "m"; m.textContent = it.means.slice(0, 4).join("; "); main.appendChild(m); }
-    if (it.src && it.src.url) {
-      const sEl = document.createElement("div"); sEl.className = "srcline";
-      let hostn = it.src.url; try { hostn = new URL(it.src.url).hostname.replace(/^www\./, ""); } catch (e) {}
-      sEl.textContent = "🔗 " + hostn; sEl.title = it.src.title || it.src.url;
-      main.appendChild(sEl);
-    }
-    row.appendChild(main);
+    const row = el("div", "entry" + (it.kind === "sent" ? " sent" : ""));
+    const body = el("div", "body");
 
-    const ctl = document.createElement("div"); ctl.className = "rowctl";
-    const decksNow = await getDecks();
-    const activeDks = Object.values(decksNow).filter((d) => !d.del).sort((a, b) => (a.ts || 0) - (b.ts || 0));
-    const sel = document.createElement("select"); sel.className = "movesel";
-    const o0 = document.createElement("option"); o0.value = NONE; o0.textContent = "Chưa phân loại"; sel.appendChild(o0);
-    activeDks.forEach((d) => { const o = document.createElement("option"); o.value = d.id; o.textContent = d.name; sel.appendChild(o); });
-    sel.value = it.deck && deckName(decksNow, it.deck) ? it.deck : NONE;
+    const head = el("div", "head");
+    head.appendChild(el("span", "w ja", it.word));
+    if (it.reading) head.appendChild(el("span", "r", it.reading));
+    const spk = nutIcon("speaker-high", "Phát âm", "", 18);
+    spk.addEventListener("click", () => speakJa(it.word));
+    head.appendChild(spk);
+    head.appendChild(favButtons(it));
+    head.appendChild(el("span", "tag", dirLabel(it.dict)));
+    if (it.mEdit) {
+      const t = el("span", "tag edited");
+      t.appendChild(ic("pencil-simple", { size: 12 }));
+      t.appendChild(el("span", null, "đã sửa"));
+      head.appendChild(t);
+    }
+    if (isDue(it, now)) {
+      const t = el("span", "tag due");
+      t.appendChild(ic("alarm", { size: 12 }));
+      t.appendChild(el("span", null, "đến hạn"));
+      head.appendChild(t);
+    }
+    body.appendChild(head);
+
+    const hvS = hanVietOf(it.word);
+    if (hvS) body.appendChild(el("div", "hv", "Hán Việt: " + hvS));
+    if (it.means && it.means.length) body.appendChild(el("div", "m", it.means.slice(0, 4).join("; ")));
+    if (it.note && it.note.trim()) body.appendChild(khoiGhiChu(it.note.trim()));
+
+    if (it.src && it.src.url) {
+      const meta = el("div", "meta");
+      const s = el("span", "srcline");
+      let hostn = it.src.url;
+      try { hostn = new URL(it.src.url).hostname.replace(/^www\./, ""); } catch (e) {}
+      s.appendChild(ic("link-simple", { size: 13 }));
+      s.appendChild(el("span", null, hostn));
+      meta.appendChild(s);
+      body.appendChild(meta);
+    }
+
+    /* --- hàng nút điều khiển --- */
+    const ctl = el("div", "ctl");
+
+    const sel = document.createElement("select");
+    sel.style.cssText = "font-size:12.5px;padding:8px 9px;border-radius:var(--r-xs)";
+    const o0 = document.createElement("option");
+    o0.value = NONE; o0.textContent = "Chưa phân loại";
+    sel.appendChild(o0);
+    activeDecks.forEach((d) => {
+      const o = document.createElement("option");
+      o.value = d.id; o.textContent = d.name;
+      sel.appendChild(o);
+    });
+    sel.value = it.deck && deckName(decks, it.deck) ? it.deck : NONE;
     sel.addEventListener("change", async () => {
       const nb2 = await getNB(); const e = nb2[it.key]; if (!e) return;
       const ne = Object.assign({}, e, { ts: Date.now() });
@@ -641,30 +1071,42 @@ async function drawNotebook() {
       nb2[it.key] = ne; await setNB(nb2); drawNotebook(); syncSoon();
     });
     ctl.appendChild(sel);
-    if (it.src && it.src.url) {
-      const open = document.createElement("button"); open.className = "mini"; open.style.color = "var(--blue)"; open.textContent = "🔗 Nguồn";
-      open.addEventListener("click", () => openSourceExt(it));
-      ctl.appendChild(open);
-      const edit = document.createElement("button"); edit.className = "mini"; edit.textContent = "✎"; edit.title = "Sửa hoặc xoá link nguồn";
-      edit.addEventListener("click", () => addLink(it));
-      ctl.appendChild(edit);
-    } else {
-      const add = document.createElement("button"); add.className = "mini"; add.style.color = "var(--blue)"; add.textContent = "🔗 Thêm link";
-      add.addEventListener("click", () => addLink(it));
-      ctl.appendChild(add);
-    }
-    const del = document.createElement("button"); del.className = "mini"; del.style.color = "var(--red)"; del.textContent = "Xoá";
+
+    const sua = nutIcon("translate", "Sửa bản dịch cho đúng chuyên ngành", "", 18);
+    sua.addEventListener("click", () => moSua(it, "trans"));
+    ctl.appendChild(sua);
+
+    const gc = nutIcon("note-pencil", it.note ? "Sửa ghi chú" : "Thêm ghi chú", it.note ? "on" : "", 18);
+    gc.addEventListener("click", () => moSua(it, "note"));
+    ctl.appendChild(gc);
+
+    const lk = nutIcon("link-simple", it.src && it.src.url ? "Mở lại trang nguồn" : "Thêm link nguồn",
+      it.src && it.src.url ? "on" : "", 18);
+    lk.addEventListener("click", () => { if (it.src && it.src.url) openSourceExt(it); else addLink(it); });
+    // Giữ lâu trên nút link để sửa/xoá link — đỡ phải thêm một nút nữa vào hàng
+    // vốn đã chật trên màn hình điện thoại.
+    let giu = null;
+    lk.addEventListener("touchstart", () => { giu = setTimeout(() => addLink(it), 550); }, { passive: true });
+    ["touchend", "touchcancel", "touchmove"].forEach((ev) =>
+      lk.addEventListener(ev, () => clearTimeout(giu), { passive: true }));
+    ctl.appendChild(lk);
+
+    const del = nutIcon("trash", "Xoá khỏi sổ tay", "danger", 18);
     del.addEventListener("click", async () => {
-      if (!confirm("Xoá “" + it.word + "”?")) return;
+      if (!confirm("Xoá “" + it.word.slice(0, 40) + "”?")) return;
       const nb2 = await getNB();
       nb2[it.key] = { word: it.word, dict: it.dict, del: true, ts: Date.now() };
       await setNB(nb2); drawNotebook(); syncSoon(); refreshNotifications();
+      toast("Đã xoá khỏi sổ tay");
     });
     ctl.appendChild(del);
-    row.appendChild(ctl);
+
+    body.appendChild(ctl);
+    row.appendChild(body);
     list.appendChild(row);
   }
 }
+
 $("filter").addEventListener("input", drawNotebook);
 $("renameDeck").addEventListener("click", async () => {
   const decks = await getDecks(); const cur = deckName(decks, curDeck) || "";
@@ -674,98 +1116,172 @@ $("renameDeck").addEventListener("click", async () => {
 });
 $("deleteDeck").addEventListener("click", async () => {
   const decks = await getDecks(); const nm = deckName(decks, curDeck);
-  if (!confirm('Xoá sổ "' + nm + '"? Từ trong sổ sẽ về "Chưa phân loại".')) return;
+  if (!confirm('Xoá sổ "' + nm + '"? Mục trong sổ sẽ về "Chưa phân loại".')) return;
   const nb = await getNB(); const now = Date.now();
   for (const k in nb) if (nb[k].deck === curDeck) { const e = Object.assign({}, nb[k], { ts: now }); delete e.deck; nb[k] = e; }
   decks[curDeck] = { id: curDeck, name: nm, del: true, ts: now };
   await setNB(nb); await setDecks(decks); curDeck = ALL; drawNotebook(); syncSoon();
 });
 
-// sync UI
+/* --- cấu hình đồng bộ --- */
 $("saveCfg").addEventListener("click", async () => {
   await Store.set("syncCfg", { url: $("syncUrl").value.trim(), token: $("syncToken").value.trim() });
   $("syncStatus").textContent = "Đã lưu cấu hình.";
 });
 $("syncNow").addEventListener("click", async () => {
   $("syncStatus").textContent = "Đang đồng bộ…";
-  try { const n = await syncNow(); $("syncStatus").textContent = "Đã đồng bộ • " + n + " từ • " + new Date().toLocaleTimeString("vi-VN"); drawNotebook(); refreshNotifications(); }
-  catch (e) { $("syncStatus").textContent = "Lỗi: " + (e && e.message || e); }
+  try {
+    const n = await syncNow();
+    $("syncStatus").textContent = "Đã đồng bộ · " + n + " mục · " + new Date().toLocaleTimeString("vi-VN");
+    drawNotebook(); veChuoiNgay(); refreshNotifications();
+  } catch (e) {
+    $("syncStatus").textContent = "Lỗi: " + ((e && e.message) || e);
+  }
 });
 
-// notif UI
+/* --- nhắc học --- */
 $("notifOn").addEventListener("click", async () => {
   await Store.set("notifCfg", { on: true, time: $("notifTime").value || "20:00" });
   await refreshNotifications();
-  $("notifStatus").textContent = "Đã bật nhắc lúc " + ($("notifTime").value || "20:00") + " hằng ngày (7 ngày tới đã lên lịch).";
+  $("notifStatus").textContent = "Đã bật nhắc lúc " + ($("notifTime").value || "20:00") + " hằng ngày.";
 });
 $("notifOff").addEventListener("click", async () => {
   await Store.set("notifCfg", { on: false });
-  if (Plugins.LocalNotifications) try { await Plugins.LocalNotifications.cancel({ notifications: [1,2,3,4,5,6,7].map((id) => ({ id })) }); } catch (e) {}
+  if (Plugins.LocalNotifications) {
+    try { await Plugins.LocalNotifications.cancel({ notifications: [1, 2, 3, 4, 5, 6, 7].map((id) => ({ id })) }); } catch (e) {}
+  }
   $("notifStatus").textContent = "Đã tắt nhắc nhở.";
 });
 
-// ================= View: Học =================
-let session = { queue: [], done: 0, again: 0 };
+$("creditBtn").addEventListener("click", () => $("aboutSheet").classList.add("show"));
+$("abClose").addEventListener("click", () => $("aboutSheet").classList.remove("show"));
+$("aboutSheet").addEventListener("click", (e) => {
+  if (e.target.id === "aboutSheet") e.target.classList.remove("show");
+});
+
+/* ==================================================================== */
+/* Màn Học                                                              */
+/* ==================================================================== */
+
+let session = { queue: [], done: 0, again: 0, deleted: 0 };
+let lastDeleted = null;
+
 async function currentDue() {
   const nb = await getNB();
   const now = Date.now();
   return Object.entries(nb).map(([key, v]) => ({ key, ...v })).filter((it) => isDue(it, now));
 }
+
 async function updateDueButton() {
   const due = await currentDue();
-  $("dueCount").textContent = due.length;
-}
-$("stStart").addEventListener("click", async () => {
-  const due = await currentDue();
-  if (!due.length) { alert("Không có từ nào đến hạn. Quay lại sau nhé!"); return; }
-  session = { queue: due.sort(() => Math.random() - 0.5), done: 0, again: 0, deleted: 0 };
-  lastDeleted = null; $("stUndo").style.display = "none"; $("stDelRow").style.display = "";
-  $("stEmpty").style.display = "none"; $("stBody").style.display = "";
-  showCard();
-});
-// Nút Thích/Không thích ngay trên thẻ học — bật/tắt ngay, không rời buổi học.
-function renderStudyFav(it) {
-  const stFav = $("stFav"); if (!stFav) return;
-  stFav.innerHTML = "";
-  const mk = (val, onTxt, offTxt) => {
-    const on = it.fav === val;
-    const b = document.createElement("button");
-    b.className = "favbtn " + (val === 1 ? "like" : "dislike") + (on ? " on" : "");
-    b.textContent = on ? onTxt : offTxt;
-    b.addEventListener("click", () => setFavStudy(it, val));
-    return b;
-  };
-  stFav.appendChild(mk(1, "❤️", "🤍"));
-  stFav.appendChild(mk(-1, "👎", "👎"));
-}
-async function setFavStudy(it, val) {
-  const nb = await getNB(); const e = nb[it.key];
-  if (!e || e.del) return;
-  const next = (e.fav === val) ? 0 : val;
-  const ne = Object.assign({}, e, { ts: Date.now() });
-  if (next) ne.fav = next; else delete ne.fav;
-  nb[it.key] = ne; await setNB(nb);
-  it.fav = next; renderStudyFav(it); syncSoon();
-}
-function showCard() {
-  const it = session.queue[0];
-  if (!it) { finishStudy(); return; }
-  $("stProg").textContent = "Còn " + session.queue.length + " từ • đã xong " + session.done;
-  $("stWord").textContent = it.word;
-  renderStudyFav(it);
-  const src = $("stSrc");
-  if (src) {
-    if (it.src && it.src.url) { src.style.display = ""; src.onclick = () => openSourceExt(it); }
-    else { src.style.display = "none"; src.onclick = null; }
-  }
-  $("stRead").textContent = "";
-  $("stMean").innerHTML = "";
-  $("stReveal").style.display = "";
-  $("stGrade").style.display = "none";
+  $("dueCount").textContent = String(due.length);
+  if (session.queue.length) return;   // đang học dở thì đừng đụng vào phần thân
+  const view = await theoDoi.xem();
+  $("stIdleIcon").innerHTML = window.Icon(due.length ? "graduation-cap" : "seal-check",
+    { size: 52, weight: "duo" });
+  $("stIdleTitle").textContent = due.length ? "Có " + due.length + " mục đến hạn" : "Không còn mục nào đến hạn";
+  $("stIdleSub").textContent = view.homNay.dat
+    ? "Hôm nay đã đạt mục tiêu " + view.goal + " lượt. Chuỗi " + Math.max(1, view.chuoi.hienTai) + " ngày."
+    : "Ôn thêm " + view.homNay.conLai + " lượt nữa là đạt mục tiêu hôm nay.";
+  $("stStart").disabled = due.length === 0;
 }
 
-// ---- Xoá nhanh ngay trong buổi học ----
-let lastDeleted = null;
+$("stStart").addEventListener("click", async () => {
+  const due = await currentDue();
+  if (!due.length) { toast("Không có mục nào đến hạn. Quay lại sau nhé!", "bad"); return; }
+  session = { queue: due.sort(() => Math.random() - 0.5), done: 0, again: 0, deleted: 0 };
+  lastDeleted = null;
+  $("stUndo").style.display = "none";
+  $("stIdle").style.display = "none";
+  $("stBody").style.display = "";
+  $("stStart").style.display = "none";
+  showCard();
+});
+
+function renderStudyFav(it) {
+  const box = $("stFav");
+  box.innerHTML = "";
+  const mk = (val, iconTen, chu) => {
+    const on = it.fav === val;
+    const b = el("button", "btn sm" + (on ? " tinted" : ""));
+    b.type = "button";
+    b.innerHTML = window.Icon(iconTen, { size: 17, weight: on ? "solid" : "line" });
+    b.appendChild(el("span", "lb", chu));
+    b.addEventListener("click", async () => {
+      it.fav = await setFav(it.key, val);
+      renderStudyFav(it);
+    });
+    return b;
+  };
+  box.appendChild(mk(1, "heart", "Thích"));
+  box.appendChild(mk(-1, "thumbs-down", "Không thích"));
+}
+
+/** @param {boolean} giuLat  true = vẽ lại thẻ nhưng giữ nguyên trạng thái đã lật */
+function showCard(giuLat) {
+  const it = session.queue[0];
+  if (!it) { finishStudy(); return; }
+  const daLat = giuLat && $("stGrade").style.display !== "none";
+
+  $("stProg").textContent = "Còn " + session.queue.length + " mục · đã xong " + session.done;
+  $("stCard").className = "studycard" + (it.kind === "sent" ? " sent" : "");
+  $("stWord").textContent = it.word;
+  renderStudyFav(it);
+
+  const src = $("stSrc");
+  if (it.src && it.src.url) { src.style.display = ""; src.onclick = () => openSourceExt(it); }
+  else { src.style.display = "none"; src.onclick = null; }
+
+  $("stRead").textContent = "";
+  $("stMean").innerHTML = "";
+  $("stMyNote").innerHTML = "";
+  $("stReveal").style.display = "";
+  $("stGrade").style.display = "none";
+  if (daLat) revealCard();
+}
+
+function revealCard() {
+  const it = session.queue[0];
+  if (!it) return;
+  const hvS = hanVietOf(it.word);
+  $("stRead").textContent = (it.reading || "") + (hvS ? ((it.reading ? "　·　" : "") + "Hán Việt: " + hvS) : "");
+  if (it.means && it.means.length) {
+    const ul = document.createElement("ul");
+    it.means.slice(0, 5).forEach((m) => ul.appendChild(el("li", null, m)));
+    $("stMean").innerHTML = "";
+    $("stMean").appendChild(ul);
+  }
+  // Ghi chú riêng chỉ hiện SAU khi lật thẻ — nó thường chứa luôn đáp án.
+  $("stMyNote").innerHTML = "";
+  if (it.note && it.note.trim()) $("stMyNote").appendChild(khoiGhiChu(it.note.trim()));
+  $("stReveal").style.display = "none";
+  $("stGrade").style.display = "";
+}
+
+$("stReveal").addEventListener("click", revealCard);
+$("stSpk").addEventListener("click", () => { const it = session.queue[0]; if (it) speakJa(it.word); });
+$("stEdit").addEventListener("click", () => { const it = session.queue[0]; if (it) moSua(it, "trans"); });
+$("stNote").addEventListener("click", () => { const it = session.queue[0]; if (it) moSua(it, "note"); });
+
+async function grade(remembered) {
+  const it = session.queue.shift();
+  if (!it) return;
+  await gradeWord(it.key, remembered);
+  if (remembered) session.done++;
+  else { session.again++; session.queue.push(Object.assign({}, it)); }   // quên -> học lại cuối hàng
+
+  // Mọi lượt chấm đều được ghi vào tiến độ, kể cả lượt "quên": công sức bỏ ra là
+  // như nhau, mà đếm cả lượt quên mới khuyến khích người ta dám chấm thật.
+  const moi = await theoDoi.ghiLuotOn(remembered);
+  veChuoiNgay();
+  syncSoon();
+  // Chờ xem hết chúc mừng rồi mới sang thẻ tiếp — nếu không thì popup che mất
+  // thẻ mới và người dùng bấm nhầm.
+  mung(moi, showCard);
+}
+$("gKnow").addEventListener("click", () => grade(true));
+$("gForgot").addEventListener("click", () => grade(false));
+
 async function deleteCurrentCard() {
   const it = session.queue[0];
   if (!it) return;
@@ -774,14 +1290,16 @@ async function deleteCurrentCard() {
   lastDeleted = original ? { key: it.key, entry: Object.assign({}, original) } : null;
   nb[it.key] = { word: it.word, dict: it.dict, del: true, ts: Date.now() };
   await setNB(nb);
+  // Bỏ hết bản sao của mục này khỏi hàng đợi (khi "Quên" nó bị xếp lại cuối hàng).
   session.queue = session.queue.filter((x) => x.key !== it.key);
-  session.deleted = (session.deleted || 0) + 1;
+  session.deleted += 1;
   $("stUndoWord").textContent = it.word;
   $("stUndo").style.display = "";
   syncSoon(); refreshNotifications();
   showCard();
 }
-async function undoDelete() {
+$("stDel").addEventListener("click", deleteCurrentCard);
+$("stUndoBtn").addEventListener("click", async () => {
   if (!lastDeleted) return;
   const nb = await getNB();
   nb[lastDeleted.key] = Object.assign({}, lastDeleted.entry, { ts: Date.now() });
@@ -789,44 +1307,46 @@ async function undoDelete() {
   lastDeleted = null;
   $("stUndo").style.display = "none";
   updateDueButton(); syncSoon(); refreshNotifications();
-}
-$("stDel").addEventListener("click", deleteCurrentCard);
-$("stUndoBtn").addEventListener("click", undoDelete);
-
-$("stReveal").addEventListener("click", () => {
-  const it = session.queue[0]; if (!it) return;
-  const hvS = hanVietOf(it.word);
-  $("stRead").textContent = (it.reading || "") + (hvS ? ((it.reading ? "　·　" : "") + "Hán Việt: " + hvS) : "");
-  if (it.means && it.means.length) {
-    const ul = document.createElement("ul");
-    it.means.slice(0, 5).forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
-    $("stMean").innerHTML = ""; $("stMean").appendChild(ul);
-  }
-  $("stReveal").style.display = "none"; $("stGrade").style.display = "";
 });
-$("stSpk").addEventListener("click", () => { const it = session.queue[0]; if (it) speakJa(it.word); });
-async function grade(remembered) {
-  const it = session.queue.shift(); if (!it) return;
-  await gradeWord(it.key, remembered);
-  if (remembered) session.done++; else { session.again++; session.queue.push(Object.assign({}, it)); }
-  syncSoon();
-  showCard();
+
+/** Dừng buổi học giữa chừng (nút Quay lại của máy). */
+function ketThucSom() {
+  session = { queue: [], done: 0, again: 0, deleted: 0 };
+  $("stBody").style.display = "none";
+  $("stIdle").style.display = "";
+  $("stStart").style.display = "";
+  $("stProg").textContent = "";
+  updateDueButton();
 }
-$("gKnow").addEventListener("click", () => grade(true));
-$("gForgot").addEventListener("click", () => grade(false));
+
 async function finishStudy() {
   $("stBody").style.display = "none";
-  $("stEmpty").style.display = "";
-  $("stEmpty").textContent = "🎉 Xong! Đã thuộc " + session.done + " từ"
-    + (session.again ? " • học lại " + session.again + " lượt" : "")
-    + (session.deleted ? " • đã xoá " + session.deleted + " từ" : "") + ".";
-  $("stDelRow").style.display = "none";
+  $("stIdle").style.display = "";
+  $("stStart").style.display = "";
   $("stProg").textContent = "";
-  updateDueButton(); syncSoon(); refreshNotifications();
+
+  const view = await theoDoi.xem();
+  $("stIdleIcon").innerHTML = window.Icon("confetti", { size: 52, weight: "duo" });
+  $("stIdleTitle").textContent = "Xong buổi học!";
+  const phan = ["Đã thuộc " + session.done + " mục"];
+  if (session.again) phan.push("học lại " + session.again + " lượt");
+  if (session.deleted) phan.push("đã xoá " + session.deleted + " mục");
+  phan.push(view.homNay.dat
+    ? "Hôm nay đạt mục tiêu — chuỗi " + Math.max(1, view.chuoi.hienTai) + " ngày."
+    : "Còn " + view.homNay.conLai + " lượt nữa là đạt mục tiêu hôm nay.");
+  $("stIdleSub").textContent = phan.join(" · ");
+
+  session = { queue: [], done: 0, again: 0, deleted: 0 };
+  const due = await currentDue();
+  $("dueCount").textContent = String(due.length);
+  $("stStart").disabled = due.length === 0;
+  veChuoiNgay(); syncSoon(); refreshNotifications();
 }
 
+/* ==================================================================== */
+/* Kéo dữ liệu mới từ Drive rồi làm tươi màn đang xem                    */
+/* ==================================================================== */
 
-// Kéo dữ liệu mới từ Drive rồi làm tươi màn hình đang xem (nếu đã cấu hình đồng bộ)
 let pulling = false;
 async function pullAndRefresh() {
   if (pulling) return;
@@ -835,14 +1355,26 @@ async function pullAndRefresh() {
   pulling = true;
   try {
     await syncNow();
-    const cur = document.querySelector(".view.show");
-    if (cur && cur.id === "viewNotebook") drawNotebook();
-    if (cur && cur.id === "viewStudy") updateDueButton();
+    if (manHienTai === "Notebook") drawNotebook();
+    if (manHienTai === "Study") updateDueButton();
+    if (manHienTai === "Progress") veTienDo();
+    veChuoiNgay();
     refreshNotifications();
-  } catch (e) { /* offline -> bỏ qua */ } finally { pulling = false; }
+  } catch (e) { /* mất mạng -> bỏ qua */ } finally { pulling = false; }
 }
 
-// ================= Nhận chữ từ menu bôi đen của Android =================
+// Kéo xuống ở đầu màn để làm mới — cử chỉ ai dùng Android cũng thử trước tiên.
+window.ChamVuot.keoDeLamMoi($("scroller"), async () => {
+  const cfg = (await Store.get("syncCfg")) || {};
+  if (!cfg.url) { toast("Chưa cấu hình đồng bộ Google Drive", "bad"); return; }
+  await pullAndRefresh();
+  toast("Đã làm mới");
+});
+
+/* ==================================================================== */
+/* Nhận chữ từ menu bôi đen của Android                                 */
+/* ==================================================================== */
+
 async function checkProcessText() {
   try {
     const data = await Store.get("processText");
@@ -855,8 +1387,11 @@ async function checkProcessText() {
 }
 window.addEventListener("njdict-process-text", checkProcessText);
 
-// ================= Nhận nội dung Chia sẻ (ACTION_SEND) — kèm link nếu app nguồn gửi =================
-// Lấy đoạn tô sáng từ Text Fragment (#:~:text=…) khi app nguồn chỉ chia sẻ một đường link.
+/* ==================================================================== */
+/* Nhận nội dung Chia sẻ (ACTION_SEND) — kèm link nếu app nguồn gửi      */
+/* ==================================================================== */
+
+// Lấy đoạn tô sáng từ Text Fragment (#:~:text=…) khi app nguồn chỉ chia sẻ link.
 function textFragmentOf(url) {
   const i = (url || "").indexOf("#:~:text=");
   if (i < 0) return "";
@@ -866,8 +1401,9 @@ function textFragmentOf(url) {
   const pick = core[0] || parts[0] || "";
   try { return decodeURIComponent(pick).trim(); } catch (e) { return pick; }
 }
-// Tách chuỗi chia sẻ thành { url, sel, title }. Chrome có thể gửi "đoạn chọn + link",
-// chỉ link (kèm #:~:text=), hoặc chỉ chữ (không link).
+
+// Tách chuỗi chia sẻ thành { url, sel, title }. Chrome có thể gửi "đoạn chọn +
+// link", chỉ link (kèm #:~:text=), hoặc chỉ chữ (không link).
 function parseShare(rawText, subject) {
   const text = (rawText || "").trim();
   const title = (subject || "").trim();
@@ -888,6 +1424,7 @@ function parseShare(rawText, subject) {
   }
   return { url, sel: sel.slice(0, 400), title };
 }
+
 async function checkShare() {
   try {
     const data = await Store.get("shareData");
@@ -899,72 +1436,91 @@ async function checkShare() {
     const src = p.url ? { url: p.url, title: p.title || "", sel: p.sel } : null;
     show("Lookup");
     runLookup(p.sel, src);
-    if (!src) setTimeout(() => toast("Trình duyệt không gửi kèm link. Có thể bấm 🔗 Thêm link trong Sổ tay để dán tay."), 400);
+    if (!src) setTimeout(() => toast("Trình duyệt không gửi kèm link. Giữ lâu nút link trong Sổ tay để dán tay.", "bad"), 400);
   } catch (e) { /* bỏ qua */ }
 }
 window.addEventListener("njdict-share", checkShare);
 
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { checkProcessText(); checkShare(); pullAndRefresh(); } });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { checkProcessText(); checkShare(); pullAndRefresh(); }
+});
 
-// ================= Khởi động =================
+/* ==================================================================== */
+/* Gắn icon vào khung tĩnh của HTML                                     */
+/* ==================================================================== */
+
+function gaiIcon() {
+  $("brandMark").innerHTML = window.Icon("translate", { size: 18, weight: "solid" });
+  $("icSync").innerHTML = window.Icon("cloud-arrow-up", { size: 18 });
+  $("icBell").innerHTML = window.Icon("bell-ringing", { size: 18 });
+  ["cr1", "cr2"].forEach((id) => { $(id).innerHTML = window.Icon("caret-right", { size: 16 }); });
+  $("q").parentElement.insertBefore(ic("magnifying-glass", { size: 18 }), $("q"));
+  $("filter").parentElement.insertBefore(ic("magnifying-glass", { size: 18 }), $("filter"));
+  $("stSpk").innerHTML = window.Icon("speaker-high", { size: 22 });
+
+  const gan = (id, ten, chu, size) => {
+    $(id).innerHTML = window.Icon(ten, { size: size || 16 }) + '<span class="lb">' + chu + "</span>";
+  };
+  gan("go", "magnifying-glass", "Tra");
+  gan("paste", "clipboard-text", "Dán &amp; tra");
+  gan("tabWord", "book-open-text", "Từ vựng");
+  gan("tabKanji", "text-aa", "Hán tự");
+  gan("tabTrans", "translate", "Dịch");
+  gan("stSrc", "link-simple", "Mở nguồn", 15);
+  gan("stEdit", "translate", "Sửa bản dịch", 15);
+  gan("stNote", "note-pencil", "Ghi chú", 15);
+  gan("stReveal", "eye", "Hiện nghĩa", 19);
+  gan("gForgot", "arrow-counter-clockwise", "Quên", 18);
+  gan("gKnow", "check", "Nhớ", 18);
+  gan("stDel", "trash", "Đã thuộc hẳn — xoá mục này", 17);
+  gan("renameDeck", "pencil-simple", "Đổi tên sổ", 15);
+  gan("deleteDeck", "trash", "Xoá sổ", 15);
+  gan("saveCfg", "floppy-disk", "Lưu cấu hình", 15);
+  gan("syncNow", "arrows-clockwise", "Đồng bộ ngay", 15);
+  gan("notifOn", "bell-ringing", "Bật nhắc nhở", 15);
+  gan("notifOff", "bell-slash", "Tắt", 15);
+
+  const st = $("stStart");
+  const den = st.querySelector(".tag");
+  st.innerHTML = window.Icon("graduation-cap", { size: 20 }) + '<span class="lb">Bắt đầu học</span>';
+  st.appendChild(den);
+
+  // Lá cờ trong hộp "Về tác giả" — vẽ tay, không phải emoji.
+  $("abFlag").innerHTML =
+    '<svg width="30" height="20" viewBox="0 0 30 20" style="border-radius:3px;box-shadow:var(--sh-1)">' +
+    '<rect width="30" height="20" fill="#da251d"/>' +
+    '<polygon points="15,3.5 16.5,7.94 21.18,8 17.43,10.79 18.82,15.26 15,12.55 11.18,15.26 12.57,10.79 8.82,8 13.5,7.94" fill="#ffff00"/></svg>';
+
+  veNav();
+}
+
+/* ==================================================================== */
+/* Khởi động                                                            */
+/* ==================================================================== */
+
 (async () => {
+  gaiIcon();
+  await theoDoi.nap();
+  await veChuoiNgay();
+
   const cfg = (await Store.get("syncCfg")) || {};
-  if (cfg.url) { $("syncUrl").value = cfg.url; $("syncToken").value = cfg.token || ""; syncNow().then((n) => { $("syncStatus").textContent = "Đã đồng bộ • " + n + " từ"; drawNotebook(); refreshNotifications(); }).catch(() => {}); }
+  if (cfg.url) {
+    $("syncUrl").value = cfg.url;
+    $("syncToken").value = cfg.token || "";
+    syncNow().then((n) => {
+      $("syncStatus").textContent = "Đã đồng bộ · " + n + " mục";
+      drawNotebook(); veChuoiNgay(); refreshNotifications();
+    }).catch(() => {});
+  }
   const ncfg = (await Store.get("notifCfg")) || {};
   if (ncfg.time) $("notifTime").value = ncfg.time;
+
   updateDueButton();
   refreshNotifications();
   checkProcessText();
   checkShare();
-})();
 
-
-// ================= Ghi công tác giả =================
-(function () {
-  const ACCENT = "#2f6fed", ACCENT2 = "#1e50c7", BRAND = "NJDict";
-  const st = document.createElement("style");
-  st.textContent =
-    ".credit-foot{text-align:center;color:#9aa2ad;font-size:13px;margin:24px 0 8px}" +
-    ".credit-foot button{border:none;background:none;color:#9aa2ad;cursor:pointer;font:inherit;padding:6px}" +
-    ".credit-foot button:hover{color:" + ACCENT + "}.credit-foot .hb{color:#e0679a}" +
-    ".cabout{position:fixed;inset:0;background:rgba(20,26,36,.55);display:none;align-items:center;justify-content:center;z-index:200;padding:16px}" +
-    ".cabout.show{display:flex}" +
-    ".ccard{width:min(430px,94vw);background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.3)}" +
-    ".ccard .top{background:linear-gradient(135deg," + ACCENT + "," + ACCENT2 + ");color:#fff;padding:20px 22px}" +
-    ".ccard .top .h{font-size:19px;font-weight:800}.ccard .top .s{opacity:.9;font-size:13px;margin-top:2px}" +
-    ".ccard .bd{padding:18px 22px 6px;color:#2b333d;font-size:15px;line-height:1.6}.ccard .bd b{color:" + ACCENT + "}" +
-    ".ccard .meta{color:#6b7684;font-size:14px;margin:10px 0}" +
-    ".ccard .motto{text-align:center;font-style:italic;font-size:16px;color:" + ACCENT + ";margin:14px 0 4px}" +
-    ".ccard .ft{padding:8px 18px 18px}.ccard .ft button{width:100%;padding:13px;border-radius:12px;font-weight:800;font-size:15px;border:none;background:linear-gradient(135deg," + ACCENT + "," + ACCENT2 + ");color:#fff;cursor:pointer}";
-  document.head.appendChild(st);
-
-  const foot = document.createElement("div");
-  foot.className = "credit-foot";
-  foot.innerHTML = 'Ra đời bởi <button id="creditBtn">Nyren Phạm <span class="hb">♥</span></button>';
-  (document.getElementById("viewNotebook") || document.body).appendChild(foot);
-
-  const FLAG = '<svg width="36" height="24" viewBox="0 0 30 20" style="flex:none;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.3)"><rect width="30" height="20" fill="#da251d"/><polygon points="15,3.5 16.5,7.94 21.18,8 17.43,10.79 18.82,15.26 15,12.55 11.18,15.26 12.57,10.79 8.82,8 13.5,7.94" fill="#ffff00"/></svg>';
-  const ov = document.createElement("div");
-  ov.className = "cabout";
-  ov.innerHTML =
-    '<div class="ccard">' +
-      '<div class="top"><div style="display:flex;align-items:center;gap:11px">' + FLAG +
-      '<div><div class="h">' + BRAND + ' · Về tác giả</div>' +
-      '<div class="s">Một món quà nhỏ gửi tặng cộng đồng học tập</div></div></div></div>' +
-      '<div class="bd">Xin chào, mình là <b>Nyren Phạm</b> (P.C.N) — cựu sinh viên ngành ' +
-      '<b>Tự động hóa, Đại học Bách Khoa Hà Nội</b>, quê <b>Ninh Bình</b>, một người mê <b>nghiên cứu công nghệ</b>.' +
-      '<div class="meta">Mình làm dự án này như một món quà hiến tặng cộng đồng học tập — ' +
-      'một công cụ nhỏ mà mạnh mẽ, đồng hành cùng bạn trên hành trình chinh phục tiếng Nhật &amp; tiếng Anh. ' +
-      'Nếu nó giúp ích cho việc học của bạn, thì mình đã hạnh phúc rồi.</div>' +
-      '<div class="motto">“Cho đi là còn mãi.”</div></div>' +
-      '<div class="ft"><button id="creditClose">Cảm ơn ♥</button></div>' +
-    '</div>';
-  document.body.appendChild(ov);
-
-  const open = () => ov.classList.add("show");
-  const close = () => ov.classList.remove("show");
-  document.getElementById("creditBtn").addEventListener("click", open);
-  document.getElementById("creditClose").addEventListener("click", close);
-  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  // Xét lại huy hiệu lúc mở app: có mốc chỉ phụ thuộc số mục trong sổ (lưu từ
+  // máy tính, hoặc lưu qua menu Chia sẻ) nên không đi qua đường chấm bài.
+  mung(await theoDoi.xetHuyHieu());
 })();

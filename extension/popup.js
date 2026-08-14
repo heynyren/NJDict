@@ -1,3 +1,9 @@
+/**
+ * Popup tra nhanh của NJDict.
+ *
+ * Dùng chung hệ thiết kế trong ui.css và bộ icon Phosphor trong icons.js với
+ * trang Sổ tay, nên hai chỗ nhìn là cùng một app.
+ */
 const qEl = document.getElementById("q");
 const dirEl = document.getElementById("dir");
 const goEl = document.getElementById("go");
@@ -10,6 +16,47 @@ const tabTransEl = document.getElementById("tabTrans");
 const transEl = document.getElementById("trans");
 const IS_CTX_WINDOW = new URLSearchParams(location.search).get("ctx") === "1";
 let initialSrc = null;   // nguồn của từ ban đầu (URL trang + tiêu đề + đoạn bôi đen) để tô sáng lại sau
+
+/** Icon dạng phần tử DOM. */
+function ic(ten, opt) {
+  const s = document.createElement("span");
+  s.innerHTML = window.Icon(ten, opt);
+  return s.firstChild;
+}
+
+/** Ô trạng thái giữa thân popup (đang tra, không có kết quả…). */
+function trangThai(box, iconTen, chu) {
+  box.className = "state";
+  box.innerHTML = "";
+  box.appendChild(ic(iconTen, { size: 34, cls: iconTen === "spinner-gap" ? "spin" : "" }));
+  box.appendChild(document.createElement("div")).textContent = chu;
+}
+
+/**
+ * Chuỗi ngày hiện lên ngay trong popup.
+ *
+ * Popup là chỗ mở nhiều nhất trong ngày — mỗi lần bôi đen một từ là nó bật ra.
+ * Nhét con số chuỗi ngày vào đây nghĩa là bạn thấy nó vài chục lần một ngày mà
+ * không phải mở app, đó chính là lúc nó có tác dụng nhắc.
+ */
+async function veChuoiNgay() {
+  try {
+    const { hoc } = await chrome.storage.local.get("hoc");
+    const view = window.TienDo.tongQuan(window.TienDo.chuanHoa(hoc), {});
+    const chip = document.getElementById("streakChip");
+    if (!view.chuoi.hienTai && !view.homNay.on) return;   // chưa học buổi nào -> không khoe gì cả
+    chip.innerHTML = window.Icon("fire", { size: 14, weight: "solid" });
+    const s = document.createElement("span");
+    s.textContent = view.chuoi.hienTai
+      ? view.chuoi.hienTai + " ngày · " + view.homNay.on + "/" + view.goal
+      : view.homNay.on + "/" + view.goal + " hôm nay";
+    chip.appendChild(s);
+    chip.title = view.homNay.dat
+      ? "Hôm nay đã đạt mục tiêu"
+      : "Còn " + view.homNay.conLai + " lượt nữa là đạt mục tiêu hôm nay";
+    chip.style.display = "";
+  } catch (e) { /* không có dữ liệu tiến độ thì thôi */ }
+}
 
 // ---- Lấy từ đang bôi đen (web) hoặc vừa Ctrl+C (PDF) ----
 async function getInitialWord() {
@@ -129,39 +176,47 @@ async function renderWord(entries) {
   resEl.className = "";
   resEl.innerHTML = "";
   if (!entries.length) {
-    resEl.className = "state";
-    resEl.textContent = "Không lấy được nghĩa. Kiểm tra mạng rồi thử lại.";
+    trangThai(resEl, "warning-circle", "Không lấy được nghĩa. Kiểm tra mạng rồi thử lại.");
     return;
   }
   for (const en of entries) {
     const box = document.createElement("div");
     box.className = "entry";
     const head = document.createElement("div");
-    head.className = "ehead";
+    head.className = "rowx between";
+    head.style.alignItems = "flex-start";
     const left = document.createElement("div");
     const w = document.createElement("span");
-    w.className = "word"; w.textContent = en.word;
+    w.className = "ja"; w.style.cssText = "font-size:21px;font-weight:750;letter-spacing:-.01em";
+    w.textContent = en.word;
     left.appendChild(w);
     const spk = document.createElement("button");
-    spk.className = "spk"; spk.textContent = "🔊"; spk.title = "Phát âm";
+    spk.className = "iconbtn"; spk.type = "button"; spk.title = "Phát âm";
+    spk.appendChild(ic("speaker-high", { size: 17 }));
     spk.addEventListener("click", () => speakJa(en.word));
     left.appendChild(spk);
     if (en.reading) {
       const r = document.createElement("span");
-      r.className = "read"; r.textContent = en.reading;
+      r.style.cssText = "color:var(--accent);font-size:13.5px;font-weight:600;margin-left:6px";
+      r.textContent = en.reading;
       left.appendChild(r);
     }
     head.appendChild(left);
 
     const btn = document.createElement("button");
-    btn.className = "save";
+    btn.className = "btn xs save";
+    btn.type = "button";
+    const danhDauDaLuu = () => {
+      btn.classList.add("saved");
+      btn.innerHTML = window.Icon("check", { size: 15 }) + '<span class="lb">Đã lưu</span>';
+    };
     const key = dirEl.value + ":" + en.word;
-    if (nb[key]) { btn.textContent = "✓ Đã lưu"; btn.classList.add("saved"); }
+    if (nb[key] && !nb[key].del) danhDauDaLuu();
     else {
-      btn.textContent = "＋ Lưu";
+      btn.innerHTML = window.Icon("plus", { size: 15 }) + '<span class="lb">Lưu</span>';
       btn.addEventListener("click", async () => {
         await saveEntry(dirEl.value, en);
-        btn.textContent = "✓ Đã lưu"; btn.classList.add("saved");
+        danhDauDaLuu();
         try { chrome.runtime.sendMessage({ type: "SYNC_SOON" }); } catch (e) { /* bỏ qua */ }
       });
     }
@@ -170,7 +225,7 @@ async function renderWord(entries) {
 
     if (en.means.length) {
       const ul = document.createElement("ul");
-      ul.className = "mean";
+      ul.className = "m";
       en.means.slice(0, 6).forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
       box.appendChild(ul);
     }
@@ -192,8 +247,7 @@ function extractKanji(str) {
 function renderKanji(chars) {
   kanjiEl.innerHTML = "";
   if (!chars.length) {
-    kanjiEl.className = "state";
-    kanjiEl.textContent = "Từ này không có Hán tự.";
+    trangThai(kanjiEl, "text-aa", "Từ này không có Hán tự.");
     return;
   }
   kanjiEl.className = "";
@@ -208,7 +262,7 @@ function renderKanji(chars) {
     row.appendChild(cEl);
 
     const main = document.createElement("div");
-    main.className = "kmain";
+    main.style.minWidth = "0";
 
     const hv = document.createElement("div");
     hv.className = "khv";
@@ -245,6 +299,7 @@ function renderKanji(chars) {
 
 // ---- Chuyển tab ----
 function switchTab(name) {
+  if (name === "kanji" && tabKanjiEl.disabled) name = "word";
   tabWordEl.classList.toggle("active", name === "word");
   tabKanjiEl.classList.toggle("active", name === "kanji");
   tabTransEl.classList.toggle("active", name === "trans");
@@ -258,30 +313,37 @@ function switchTab(name) {
 let lastTranslated = "";
 function doTranslate(raw) {
   const text = (raw || "").trim();
-  if (!text) { transEl.className = "state"; transEl.textContent = "Nhập hoặc dán đoạn cần dịch."; return; }
+  if (!text) { trangThai(transEl, "translate", "Nhập hoặc dán đoạn cần dịch."); return; }
   if (lastTranslated === text && transEl.querySelector(".tr")) return;   // đã dịch rồi
-  transEl.className = "state"; transEl.textContent = "Đang dịch…";
+  trangThai(transEl, "spinner-gap", "Đang dịch…");
   chrome.runtime.sendMessage({ type: "TRANSLATE", text, from: "ja", to: "vi" }, (res) => {
     if (chrome.runtime.lastError) { transEl.textContent = "Lỗi: " + chrome.runtime.lastError.message; return; }
-    if (!res || !res.ok) { transEl.className = "state"; transEl.textContent = (res && res.error) || "Không dịch được."; return; }
+    if (!res || !res.ok) { trangThai(transEl, "warning-circle", (res && res.error) || "Không dịch được."); return; }
     lastTranslated = text;
     transEl.className = "trbox";
     transEl.innerHTML = "";
-    const hd = document.createElement("div"); hd.className = "hd";
+    const hd = document.createElement("div"); hd.className = "rowx between";
+    hd.style.alignItems = "flex-start"; hd.style.gap = "10px";
     const tr = document.createElement("div"); tr.className = "tr"; tr.textContent = res.text;
     hd.appendChild(tr);
-    const sv = document.createElement("button"); sv.className = "save"; sv.textContent = "＋ Lưu";
+    const sv = document.createElement("button"); sv.className = "btn xs save"; sv.type = "button";
+    sv.innerHTML = window.Icon("plus", { size: 15 }) + '<span class="lb">Lưu</span>';
+    sv.title = "Lưu bản dịch vào sổ tay — sau đó có thể sửa lại cho đúng chuyên ngành";
     sv.addEventListener("click", () => {
       const entry = { word: text, reading: res.reading || "", means: [res.text], kind: "sent" };
       if (initialSrc && initialSrc.url) entry.src = { url: initialSrc.url, title: initialSrc.title, sel: text };
       chrome.runtime.sendMessage({ type: "SAVE_WORD", entry: entry, dict: "javi" }, () => {
-        sv.textContent = "✓ Đã lưu"; sv.classList.add("saved");
+        sv.classList.add("saved");
+        sv.innerHTML = window.Icon("check", { size: 15 }) + '<span class="lb">Đã lưu</span>';
       });
     });
     hd.appendChild(sv);
     transEl.appendChild(hd);
     if (res.reading) {
-      const rd = document.createElement("div"); rd.className = "furi"; rd.textContent = "🗣 " + res.reading;
+      const rd = document.createElement("div"); rd.className = "furi";
+      rd.appendChild(ic("speaker-high", { size: 15 }));
+      const rs = document.createElement("span"); rs.textContent = res.reading;
+      rd.appendChild(rs);
       transEl.appendChild(rd);
     }
     const src = document.createElement("div"); src.className = "src"; src.textContent = text;
@@ -298,18 +360,16 @@ async function run(word) {
   lastTranslated = "";
   if (w.length > 30 || /[。．！？\n]/.test(w)) { switchTab("trans"); return; }   // là câu -> dịch thẳng
   const chars = extractKanji(w);
-  tabKanjiEl.textContent = "Hán tự" + (chars.length ? " (" + chars.length + ")" : "");
+  tabKanjiEl.querySelector(".lb").textContent = "Hán tự" + (chars.length ? " " + chars.length : "");
   tabKanjiEl.disabled = chars.length === 0;
   renderKanji(chars);
   if (!chars.length) switchTab("word");
 
   if (!w) {
-    resEl.className = "state";
-    resEl.textContent = "Bôi đen một từ rồi mở lại, hoặc gõ vào ô trên.";
+    trangThai(resEl, "magnifying-glass", "Bôi đen một từ rồi mở lại, hoặc gõ vào ô trên.");
     return;
   }
-  resEl.className = "state";
-  resEl.textContent = "Đang tra “" + w + "”…";
+  trangThai(resEl, "spinner-gap", "Đang tra “" + w + "”…");
   const entries = await lookup(w, dict);
   renderWord(entries);
 }
@@ -323,8 +383,26 @@ tabKanjiEl.addEventListener("click", () => { if (!tabKanjiEl.disabled) switchTab
 tabTransEl.addEventListener("click", () => switchTab("trans"));
 bookEl.addEventListener("click", () => { chrome.tabs.create({ url: chrome.runtime.getURL("notebook.html") }); });
 
+/** Gắn icon vào khung tĩnh của HTML. */
+function gaiIcon() {
+  document.getElementById("brandMark").innerHTML = window.Icon("translate", { size: 17, weight: "solid" });
+  document.getElementById("go").innerHTML =
+    window.Icon("magnifying-glass", { size: 15 }) + '<span class="lb">Tra</span>';
+  document.getElementById("book").innerHTML =
+    window.Icon("notebook", { size: 17 }) + '<span class="lb">Mở sổ tay &amp; tiến độ</span>';
+  const gan = (el, ten, chu) => {
+    el.innerHTML = window.Icon(ten, { size: 15 }) + '<span class="lb">' + chu + "</span>";
+  };
+  gan(tabWordEl, "book-open-text", "Từ vựng");
+  gan(tabKanjiEl, "text-aa", "Hán tự");
+  gan(tabTransEl, "translate", "Dịch");
+  qEl.parentElement.insertBefore(ic("magnifying-glass", { size: 18 }), qEl);
+}
+
 // ---- Khởi động ----
 (async () => {
+  gaiIcon();
+  veChuoiNgay();
   const word = await getInitialWord();
   if (word) qEl.value = word;
   run(word);

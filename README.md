@@ -7,8 +7,8 @@ Repo này gộp **cả hai dự án** để quản lý và nâng cấp qua từn
 
 | Thư mục | Dự án | Phiên bản |
 |---------|-------|-----------|
-| [`extension/`](extension/) | Extension Chrome (máy tính) — tra từ khi bôi đen trên web/PDF | v4.0 |
-| [`android/`](android/) | App Android (Capacitor) — tra từ, sổ tay, học SRS, tiến độ, thông báo | v2.0.0 |
+| [`extension/`](extension/) | Extension Chrome (máy tính) — tra từ khi bôi đen trên web/PDF | v4.1 |
+| [`android/`](android/) | App Android (Capacitor) — tra từ, sổ tay, học SRS, tiến độ, thông báo | v2.0.1 |
 
 Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`ui.css`), bộ icon
 (`icons.js`), phần theo dõi tiến độ (`tien-do.js`), và cùng cơ chế tra cứu API Mazii +

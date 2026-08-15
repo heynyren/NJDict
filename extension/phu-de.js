@@ -119,16 +119,37 @@
     };
   }
 
+  /**
+   * Đọc json3 thành các MẨU nhỏ nhất còn giữ được mốc thời gian.
+   *
+   * Phụ đề tự sinh thường kèm `tOffsetMs` cho từng từ. Giữ lại thì tô sáng được
+   * đúng chữ đang nói chứ không chỉ đúng câu — mà đó mới là thứ giúp bám kịp
+   * người bản xứ nói nhanh. Phụ đề người làm thường mỗi sự kiện một mẩu, lúc đó
+   * mẩu = một dòng phụ đề, vẫn nhỏ hơn câu nhiều.
+   *
+   * Cố ý KHÔNG cắt bỏ khoảng trắng đầu/cuối mỗi mẩu: với tiếng có dấu cách,
+   * dấu cách nằm ở đầu mẩu sau, cắt đi là dính chữ.
+   */
   function docJson3(txt) {
     const d = JSON.parse(txt);
-    return (d.events || [])
-      .filter((e) => e.segs)
-      .map((e) => ({
-        t: (e.tStartMs || 0) / 1000,
-        d: (e.dDurationMs || 0) / 1000,
-        s: e.segs.map((x) => x.utf8 || "").join("").replace(/\s+/g, " ").trim()
-      }))
-      .filter((c) => c.s);
+    const out = [];
+    (d.events || []).forEach((e) => {
+      if (!e.segs) return;
+      const t0 = (e.tStartMs || 0) / 1000;
+      const dai = (e.dDurationMs || 0) / 1000;
+      const segs = e.segs.filter((x) => (x.utf8 || "").trim());
+      segs.forEach((x, i) => {
+        const lech = (x.tOffsetMs || 0) / 1000;
+        const sau = segs[i + 1];
+        const lechSau = sau ? ((sau.tOffsetMs || 0) / 1000) : dai;
+        out.push({
+          t: t0 + lech,
+          d: Math.max(0.05, lechSau - lech),
+          s: String(x.utf8).replace(/\s+/g, " ")
+        });
+      });
+    });
+    return out;
   }
 
   /**
@@ -202,6 +223,8 @@
     });
     // Bảng của YouTube không cho biết mỗi mẩu dài bao lâu -> suy từ mốc mẩu sau.
     for (let i = 0; i < ds.length; i++) ds[i].d = (i + 1 < ds.length) ? Math.max(0, ds[i + 1].t - ds[i].t) : 4;
+    // Bảng của họ không có mốc theo từ, nên mẩu nhỏ nhất ở đây là một dòng —
+    // vẫn đủ để tô sáng nhỏ hơn câu.
 
     // Đóng bảng của họ lại: để mở thì nó chiếm mất cột phải, đẩy bảng này xuống.
     const bang = document.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]');
@@ -221,6 +244,7 @@
   function noiChu(a, b) {
     if (!a) return b;
     if (!b) return a;
+    if (/\s$/.test(a) || /^\s/.test(b)) return a + b;   // mẩu đã tự mang dấu cách
     const dinh = CJK.test(a[a.length - 1]) && CJK.test(b[0]);
     return a + (dinh ? "" : " ") + b;
   }
@@ -240,8 +264,17 @@
     let cur = null;
     for (let i = 0; i < cues.length; i++) {
       const c = cues[i];
-      if (!cur) cur = { t: c.t, tEnd: c.t + c.d, s: c.s };
-      else { cur.s = noiChu(cur.s, c.s); cur.tEnd = c.t + c.d; }
+      if (!cur) {
+        cur = { t: c.t, tEnd: c.t + c.d, s: c.s, manh: [{ t: c.t, d: c.d, a: 0, b: c.s.length }] };
+      } else {
+        // Ghi lại mẩu này nằm ở đâu trong chuỗi đã ghép, để lúc phát còn tô
+        // sáng đúng phần đang được nói. noiChu chỉ nối thêm vào đuôi, nên vị trí
+        // bắt đầu chính là độ dài mới trừ đi độ dài mẩu.
+        const moi = noiChu(cur.s, c.s);
+        cur.manh.push({ t: c.t, d: c.d, a: moi.length - c.s.length, b: moi.length });
+        cur.s = moi;
+        cur.tEnd = c.t + c.d;
+      }
 
       const sau = cues[i + 1];
       const khoangLang = sau ? sau.t - (c.t + c.d) : Infinity;
@@ -264,6 +297,7 @@
     ban: [], iBan: 0,   // các bản phụ đề + bản đang chọn
     cau: [],            // câu đã ghép
     hien: -1,           // chỉ số câu đang nói
+    manh: -1,           // chỉ số mẩu đang được nói TRONG câu đó
     bam: true,          // tự cuộn theo video
     songNgu: false,
     dich: new Map(),    // chỉ số câu -> bản dịch
@@ -358,6 +392,17 @@
     .ln.on .ts { background: var(--surface); }
     .ln .tx { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
     .ln .vi { display: block; margin-top: 3px; color: var(--ink-2); font-size: 12.5px; }
+    /* Mẩu đang được nói. Chỉ tô trong dòng đang chạy — tô cả bảng thì mắt không
+       biết nhìn đâu. Bo góc + nền mềm chứ không gạch chân: chữ Nhật có nhiều nét
+       chạm đáy, gạch chân là dính vào chữ. */
+    .pc { border-radius: 5px; padding: 0 1px; }
+    .ln.on .pc.now {
+      background: var(--accent-soft); color: var(--accent);
+      font-weight: 700; box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+    /* Câu đang nói thì bản dịch của nó cũng đậm lên theo. Chỉ tới mức CÂU thôi
+       — xem ghi chú ở đầu file về việc vì sao không tô tới từng từ. */
+    .ln.on .vi { color: var(--ink); }
     .ln .sv {
       flex: none; visibility: hidden; border: 1px solid var(--line); background: var(--surface);
       color: var(--accent); border-radius: 999px; padding: 3px 7px; font-size: 11px; font-weight: 650;
@@ -503,6 +548,27 @@
     return true;
   }
 
+  /**
+   * Vẽ một câu thành từng mẩu có mốc thời gian, để còn tô sáng được.
+   *
+   * Phần chữ nằm GIỮA hai mẩu (dấu cách do noiChu chèn) vẫn để làm text thường —
+   * bọc nó vào span thì lúc tô sáng sẽ thấy nền loang sang cả khoảng trắng.
+   */
+  function veManh(el, c) {
+    const manh = c.manh || [];
+    if (!manh.length) { el.appendChild(document.createTextNode(c.s)); return; }
+    let pos = 0;
+    manh.forEach((m, k) => {
+      if (m.a > pos) el.appendChild(document.createTextNode(c.s.slice(pos, m.a)));
+      const sp = document.createElement("span");
+      sp.className = "pc"; sp.dataset.k = String(k);
+      sp.textContent = c.s.slice(m.a, m.b);
+      el.appendChild(sp);
+      pos = m.b;
+    });
+    if (pos < c.s.length) el.appendChild(document.createTextNode(c.s.slice(pos)));
+  }
+
   /* --- vẽ danh sách --- */
   function veDanhSach() {
     const list = S.oList;
@@ -519,7 +585,7 @@
       ln.appendChild(ts);
 
       const tx = document.createElement("div"); tx.className = "tx";
-      tx.appendChild(document.createTextNode(c.s));
+      veManh(tx, c);
       if (S.songNgu) {
         const vi = document.createElement("span"); vi.className = "vi";
         vi.textContent = S.dich.has(i) ? S.dich.get(i) : "…";
@@ -590,6 +656,31 @@
     });
   }
 
+  /** Mẩu đang được nói trong câu i, hoặc -1. */
+  function timManh(i, t) {
+    const c = S.cau[i];
+    if (!c || !c.manh || !c.manh.length) return -1;
+    const m = c.manh;
+    let lo = 0, hi = m.length - 1, ra = -1;
+    while (lo <= hi) {
+      const g = (lo + hi) >> 1;
+      if (m[g].t <= t) { ra = g; lo = g + 1; } else hi = g - 1;
+    }
+    // Cố ý GIỮ mẩu cuối vừa nói khi rơi vào khoảng lặng, thay vì tắt hẳn: nhấp
+    // nháy theo từng quãng nghỉ giữa các từ còn khó theo dõi hơn là không tô.
+    return ra;
+  }
+
+  function danhDauManh(k) {
+    if (!S.oList) return;
+    const cu = S.oList.querySelector(".pc.now");
+    if (cu) cu.classList.remove("now");
+    if (S.hien < 0 || k < 0) return;
+    const ln = S.oList.querySelector('.ln[data-i="' + S.hien + '"]');
+    const sp = ln && ln.querySelector('.pc[data-k="' + k + '"]');
+    if (sp) sp.classList.add("now");
+  }
+
   function danhDau(epCuon) {
     if (!S.oList) return;
     const cu = S.oList.querySelector(".ln.on");
@@ -597,6 +688,7 @@
     if (S.hien < 0) return;
     const ln = S.oList.querySelector('.ln[data-i="' + S.hien + '"]');
     if (ln) ln.classList.add("on");
+    danhDauManh(S.manh);
     if (S.bam || epCuon) cuonToi(S.hien);
   }
 
@@ -606,12 +698,15 @@
     const vd = video();
     if (!vd) return;
     const nhip = () => {
-      const i = timCau(vd.currentTime);
+      const t = vd.currentTime;
+      const i = timCau(t);
       if (i !== S.hien) {
-        S.hien = i;
+        S.hien = i; S.manh = -1;
         danhDau(false);
         if (S.songNgu) dichHienRa();
       }
+      const k = timManh(i, t);
+      if (k !== S.manh) { S.manh = k; danhDauManh(k); }
     };
     if (vd.requestVideoFrameCallback) {
       const vong = () => { nhip(); rvfc = vd.requestVideoFrameCallback(vong); };
@@ -619,7 +714,7 @@
     }
     // Vẫn giữ một nhịp đếm giờ: requestVideoFrameCallback đứng im khi video
     // tạm dừng, mà tua lúc đang dừng thì dòng sáng vẫn phải chạy theo.
-    dongHo = setInterval(nhip, 300);
+    dongHo = setInterval(nhip, 150);
   }
   function dungTheoDoi() {
     if (dongHo) { clearInterval(dongHo); dongHo = null; }
@@ -632,7 +727,7 @@
     vd.currentTime = Math.max(0, c.t + 0.02);
     const p = vd.play();
     if (p && p.catch) p.catch(() => {});
-    S.hien = i; danhDau(true);
+    S.hien = i; S.manh = -1; danhDau(true);
   }
 
   /* --- dịch song ngữ (chỉ dịch phần đang nhìn thấy) --- */

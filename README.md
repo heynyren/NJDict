@@ -48,6 +48,10 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
   Có **ba đường lấy phụ đề** vì YouTube đang siết dần đường `timedtext` (từ chối
   bằng cách trả 200 kèm thân rỗng): hỏi trình phát trong trang, fetch cùng nguồn,
   và cuối cùng là đọc lại bảng bản chép lời của chính YouTube.
+  Đang phát thì **mẩu đang được nói tự sáng lên** ngay trong câu — phụ đề tự sinh
+  có mốc theo từng từ nên tô được tới từng chữ. Bản dịch sáng theo **câu**, không
+  tô tới từng từ: máy dịch cả câu nên không có căn cứ nào nói từ Việt nào ứng với
+  từ Nhật nào, tô theo tỉ lệ thời gian chỉ là bịa ra sự tương ứng.
 
 ## Quy trình phát triển / nâng cấp
 

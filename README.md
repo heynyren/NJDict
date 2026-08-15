@@ -14,7 +14,7 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
 (`icons.js`), phần theo dõi tiến độ (`tien-do.js`), và cùng cơ chế tra cứu API Mazii +
 đồng bộ Google Apps Script.
 
-## Có gì mới (v4.0 / v2.0.0)
+## Có gì mới (v4.3 / v2.2.0)
 
 - **Theo dõi quá trình học & phần thưởng** — mục tiêu mỗi ngày, chuỗi ngày liên tiếp,
   lịch nhiệt 17 tuần và **24 huy hiệu**, cùng cơ chế với app Denken 3 Shuu. Xem
@@ -31,6 +31,10 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
 - **Hán tự ngang hàng từ vựng** — mỗi chữ lưu được vào sổ tay, vào sóng học tập, sửa
   nghĩa và ghi chú được; có chip lọc riêng để học chữ thành buổi riêng. Xem
   `extension/han-tu.js`.
+- **Sửa nghĩa ngay trong popup** — thấy máy dịch sai ngữ cảnh thì chữa tại chỗ, không
+  phải mở Sổ tay tìm lại. Sửa được cả nghĩa Mazii trả về, nghĩa Hán tự lẫn bản dịch
+  câu; sửa là lưu luôn, và ô ghi chú nằm ngay cạnh. Bản Android mở thẳng bảng sửa
+  quen thuộc từ thẻ kết quả.
 
 ## Quy trình phát triển / nâng cấp
 

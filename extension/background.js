@@ -178,8 +178,8 @@ async function savedKanji(list) {
   const nb = notebook || {};
   const out = {};
   (list || []).forEach((k) => {
-    const key = self.HanTu.KHOA(k.ch);
-    if (nb[key] && !nb[key].del) out[k.ch] = true;
+    const t = tomTat(nb[self.HanTu.KHOA(k.ch)]);
+    if (t) out[k.ch] = t;
   });
   return out;
 }
@@ -234,13 +234,29 @@ function trimCache(c) {
   for (let i = 0; i < drop; i++) delete c[keys[i]];
 }
 
+/**
+ * Tóm tắt một mục đã có trong sổ tay, để popup biết mà hiện sẵn BẢN CỦA BẠN.
+ *
+ * Trả về object (vẫn "thật" khi kiểm tra truthy như bản cũ trả `true`), nhưng
+ * kèm theo ghi chú và bản nghĩa bạn đã sửa tay. Nhờ vậy tra lại một từ đã hiệu
+ * đính thì popup hiện đúng nghĩa bạn chốt, chứ không hiện lại nghĩa của Mazii
+ * rồi bắt bạn nhớ là mình đã sửa rồi.
+ */
+function tomTat(en) {
+  if (!en || en.del) return null;
+  const o = { saved: true };
+  if (en.note) o.note = en.note;
+  if (en.mEdit) { o.mEdit = 1; o.means = en.means || []; }
+  return o;
+}
+
 async function savedKeys(entries, dict) {
   const { notebook } = await chrome.storage.local.get("notebook");
   const nb = notebook || {};
   const out = {};
   (entries || []).forEach((e) => {
-    const k = dict + ":" + e.word;
-    if (nb[k] && !nb[k].del) out[e.word] = true;
+    const t = tomTat(nb[dict + ":" + e.word]);
+    if (t) out[e.word] = t;
   });
   return out;
 }
@@ -284,18 +300,27 @@ async function saveWord(entry, dict) {
   if (entry.kind) e.kind = entry.kind;                       // "sent" = câu đã dịch, "kanji" = một chữ Hán
   if (entry.kanji) e.kanji = entry.kanji;                    // on/kun/số nét/JLPT/bộ thủ
   if (entry.src && entry.src.url) e.src = entry.src;         // nguồn: {url, title, sel}
+  // Lần lưu này có mang theo bản sửa tay (sửa ngay trong popup) hay không.
+  if (entry.note != null) e.note = String(entry.note);
+  if (entry.mEdit) { e.mEdit = 1; if (entry.mOrig) e.mOrig = entry.mOrig; }
   if (old && !old.del) {                                     // lưu lại từ đã có -> GIỮ mọi thứ bạn đã tự làm
     if (old.deck) e.deck = old.deck;
     if (old.srs) e.srs = old.srs;
     if (old.kind && !e.kind) e.kind = old.kind;
     if (old.src && !e.src) e.src = old.src;                  // giữ nguồn cũ nếu lần lưu này không kèm nguồn
     if (old.fav) e.fav = old.fav;
-    if (old.note) e.note = old.note;
+    if (e.note == null && old.note) e.note = old.note;
+    if (old.kanji && !e.kanji) e.kanji = old.kanji;
     // Bản dịch bạn đã sửa tay thì KHÔNG được để máy dịch đè lên. Tra lại cùng
     // một từ là chuyện thường xuyên; mỗi lần tra lại mà mất công hiệu đính thì
-    // chẳng ai buồn sửa nữa.
-    if (old.kanji && !e.kanji) e.kanji = old.kanji;
-    if (old.mEdit) { e.mEdit = 1; e.means = old.means; if (old.mOrig) e.mOrig = old.mOrig; }
+    // chẳng ai buồn sửa nữa. Ngoại lệ duy nhất: chính lần lưu này là một bản
+    // sửa mới — lúc đó cái mới mới là ý bạn, bản cũ phải nhường.
+    if (!entry.mEdit && old.mEdit) {
+      e.mEdit = 1; e.means = old.means; if (old.mOrig) e.mOrig = old.mOrig;
+    }
+    // Bản gốc của máy chỉ ghi một lần, ở lần sửa đầu tiên; sửa tiếp lần hai
+    // thì "gốc" vẫn phải là bản máy dịch chứ không phải bản sửa lần trước.
+    if (e.mEdit && !e.mOrig && old.mOrig) e.mOrig = old.mOrig;
   }
   nb[key] = e;
   await chrome.storage.local.set({ notebook: nb });
@@ -358,7 +383,9 @@ async function handleTranslate(rawText, from, to) {
   const c = trCache || {};
   const hit = c[key];
   const now = Date.now();
-  if (hit && (now - (hit.ts || 0) < TR_TTL)) return { ok: true, text: hit.v, reading: hit.rd || "", cached: true };
+  if (hit && (now - (hit.ts || 0) < TR_TTL)) {
+    return { ok: true, text: hit.v, reading: hit.rd || "", cached: true, saved: await daLuuCau(text) };
+  }
 
   // 1) Nhanh: gọi thẳng Google Dịch.  2) Dự phòng: Apps Script (nếu (1) lỗi/không có mạng thẳng).
   let out = "", reading = "";
@@ -386,7 +413,15 @@ async function handleTranslate(rawText, from, to) {
     for (let i = 0; i < keys.length - TR_MAX; i++) delete c[keys[i]];
   }
   await chrome.storage.local.set({ trCache: c });
-  return { ok: true, text: out, reading: reading };
+  return { ok: true, text: out, reading: reading, saved: await daLuuCau(text) };
+}
+
+/** Câu này đã lưu vào sổ tay chưa — và bạn đã sửa lại bản dịch của nó chưa. */
+async function daLuuCau(text) {
+  try {
+    const { notebook } = await chrome.storage.local.get("notebook");
+    return tomTat((notebook || {})["javi:" + text]);
+  } catch (e) { return null; }
 }
 
 // ==== Đồng bộ Google Drive qua Apps Script ====

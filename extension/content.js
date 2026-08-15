@@ -23,6 +23,7 @@
 
   function close() {
     if (host) { host.remove(); host = null; root = null; boxEl = null; }
+    soOSuaDangMo = 0;
   }
 
   function ensureHost(x, y) {
@@ -96,6 +97,27 @@
       .tabs button .n { opacity: .6; font-weight: 600; }
       .pane { display: none; }
       .pane.on { display: block; }
+
+      /* Sửa nghĩa & ghi chú ngay tại chỗ */
+      .acts { display: flex; gap: 5px; flex: none; }
+      .ed { margin-top: 8px; }
+      .ed label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+        color: var(--ink-3); margin: 9px 0 4px; }
+      .ed label:first-child { margin-top: 2px; }
+      .ed textarea { display: block; width: 100%; font: inherit; font-size: 13px; line-height: 1.5;
+        color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
+        border-radius: 12px; padding: 8px 10px; resize: vertical; outline: none; }
+      .ed textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+      .edrow { display: flex; gap: 6px; margin-top: 10px; }
+      .edrow .sv { flex: 1; justify-content: center; }
+      .sv.pri { border-color: transparent; color: #fff; background: var(--accent); }
+      .sv[disabled] { opacity: .55; cursor: default; }
+      .nt { margin-top: 7px; padding: 7px 10px; background: var(--surface-2); border-radius: 12px;
+        font-size: 12.5px; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+      .nt b { color: var(--ink-3); font-weight: 700; font-size: 11px; letter-spacing: .02em; }
+      .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 700;
+        color: var(--good); background: var(--good-soft); border-radius: 999px;
+        padding: 2px 7px; margin-left: 6px; vertical-align: 2px; }
 
       /* Thẻ một chữ Hán */
       .kj { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
@@ -297,6 +319,177 @@
     return sv;
   }
 
+  /* ================================================================== */
+  /* Sửa nghĩa & ghi chú NGAY TRONG POPUP                               */
+  /* ================================================================== */
+  /*
+   * Máy dịch sai với ngữ cảnh là chuyện gặp hằng ngày, nhất là với từ chuyên
+   * ngành. Trước đây muốn chữa thì phải: lưu → mở Sổ tay → tìm lại từ → sửa.
+   * Bốn bước cho một việc mất năm giây, nên rốt cuộc chẳng ai sửa, và sổ tay
+   * đầy những nghĩa mình biết là sai. Nay sửa ngay ở chỗ vừa nhìn thấy nó sai.
+   *
+   * Hai điểm cố ý:
+   *  - SỬA LÀ LƯU. Một mục chưa có trong sổ tay mà bấm Sửa rồi Lưu thì nó được
+   *    tạo luôn kèm bản sửa; không bắt bấm Lưu trước rồi mới cho sửa.
+   *  - Trong lúc ô soạn thảo mở thì popup KHÔNG tự tắt nữa. Bình thường bấm ra
+   *    ngoài / Esc / chuyển cửa sổ là tắt — giữ nguyên như vậy thì vừa gõ vừa
+   *    mất chữ.
+   */
+
+  let soOSuaDangMo = 0;
+
+  /** Ô soạn thảo tại chỗ: nghĩa (mỗi dòng một nghĩa) + ghi chú. */
+  function dungOSua(dl, luu, huy) {
+    const f = document.createElement("div");
+    f.className = "ed";
+
+    const oVanBan = (nhan, giaTri, dong, goiY) => {
+      const l = document.createElement("label"); l.textContent = nhan; f.appendChild(l);
+      const t = document.createElement("textarea");
+      t.rows = dong; t.value = giaTri || "";
+      if (goiY) t.placeholder = goiY;
+      // Trang bên dưới hay bắt phím tắt một ký tự (j/k để cuộn, / để tìm…).
+      // Không chặn ở đây thì gõ ghi chú là kích hoạt lung tung.
+      t.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") { e.preventDefault(); huy(); }
+      });
+      f.appendChild(t);
+      return t;
+    };
+
+    const oNghia = oVanBan("Nghĩa — mỗi dòng một nghĩa",
+      (dl.means || []).join("\n"),
+      Math.min(6, Math.max(2, (dl.means || []).length + 1)),
+      "Nghĩa đúng với ngữ cảnh / chuyên ngành của bạn…");
+    const oGhi = oVanBan("Ghi chú", dl.note || "", 2, "Ngữ cảnh, cách dùng, chỗ hay nhầm…");
+
+    const row = document.createElement("div"); row.className = "edrow";
+    const bLuu = document.createElement("button");
+    bLuu.type = "button"; bLuu.className = "sv pri";
+    bLuu.appendChild(ic("check", 14));
+    const nhanLuu = document.createElement("span"); nhanLuu.textContent = "Lưu"; bLuu.appendChild(nhanLuu);
+    const bHuy = document.createElement("button");
+    bHuy.type = "button"; bHuy.className = "sv";
+    const nhanHuy = document.createElement("span"); nhanHuy.textContent = "Huỷ"; bHuy.appendChild(nhanHuy);
+
+    bLuu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (bLuu.disabled) return;
+      bLuu.disabled = true; nhanLuu.textContent = "Đang lưu…";
+      luu({
+        means: oNghia.value.split("\n").map((s) => s.trim()).filter(Boolean),
+        note: oGhi.value.trim()
+      }, () => { bLuu.disabled = false; nhanLuu.textContent = "Lưu"; });
+    });
+    bHuy.addEventListener("click", (e) => { e.stopPropagation(); huy(); });
+    row.appendChild(bLuu); row.appendChild(bHuy);
+    f.appendChild(row);
+
+    setTimeout(() => {
+      try { oNghia.focus(); oNghia.setSelectionRange(oNghia.value.length, oNghia.value.length); } catch (e) {}
+    }, 0);
+    return f;
+  }
+
+  /**
+   * Một thẻ trong popup, sửa được tại chỗ.
+   *
+   * @param {Element} hostEl  ô chứa thẻ (được vẽ lại mỗi lần đổi trạng thái)
+   * @param {object} ct
+   *   - dl        {means, note, saved, mEdit} trạng thái hiện tại
+   *   - dau(el)   phần đầu thẻ: từ + phiên âm, hoặc âm Hán Việt… (có thể rỗng)
+   *   - veNghia(el, dl)  cách hiển thị phần nghĩa (gạch đầu dòng, hay một đoạn)
+   *   - phu(el, dl)      phần phụ dưới cùng (phiên âm câu, nguyên văn…) — tuỳ chọn
+   *   - gui(dl, coSua, xong)  gửi đi lưu
+   */
+  function theSuaDuoc(hostEl, ct) {
+    const dl = ct.dl;
+    let dangSua = false;
+
+    function nutHanhDong() {
+      const acts = document.createElement("div"); acts.className = "acts";
+      acts.appendChild(nutLuu(dl.saved, (xong) => {
+        ct.gui({ means: dl.means, note: dl.note }, false, (kq) => {
+          if (kq && kq.ok !== false) { dl.saved = true; xong(); }
+        });
+      }));
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "sv";
+      b.title = "Sửa nghĩa & ghi chú";
+      b.appendChild(ic("pencil-simple", 14));
+      const t = document.createElement("span"); t.textContent = "Sửa"; b.appendChild(t);
+      b.addEventListener("click", (e) => { e.stopPropagation(); moSua(); });
+      acts.appendChild(b);
+      return acts;
+    }
+
+    function veDau(hienNut) {
+      const hd = document.createElement("div"); hd.className = "hd";
+      const left = document.createElement("div");
+      if (ct.dau) ct.dau(left, dl);
+      if (dl.mEdit) {
+        const tg = document.createElement("span"); tg.className = "tag";
+        tg.appendChild(ic("pencil-simple", 11));
+        const t = document.createElement("span"); t.textContent = "bản của bạn";
+        tg.appendChild(t);
+        left.appendChild(tg);
+      }
+      hd.appendChild(left);
+      if (hienNut) hd.appendChild(nutHanhDong());
+      hostEl.appendChild(hd);
+    }
+
+    function ve() {
+      hostEl.textContent = "";
+      veDau(true);
+      ct.veNghia(hostEl, dl);
+      if (dl.note) {
+        const n = document.createElement("div"); n.className = "nt";
+        const b = document.createElement("b"); b.textContent = "Ghi chú · ";
+        n.appendChild(b);
+        n.appendChild(document.createTextNode(dl.note));
+        hostEl.appendChild(n);
+      }
+      if (ct.phu) ct.phu(hostEl, dl);
+      place(); requestAnimationFrame(place);
+    }
+
+    function dongSua() {
+      if (!dangSua) return;
+      dangSua = false;
+      soOSuaDangMo = Math.max(0, soOSuaDangMo - 1);
+    }
+
+    function moSua() {
+      if (dangSua) return;
+      dangSua = true; soOSuaDangMo++;
+      hostEl.textContent = "";
+      veDau(false);
+      hostEl.appendChild(dungOSua(dl, (moi, thatBai) => {
+        ct.gui(moi, true, (kq) => {
+          if (!kq || kq.ok === false) { thatBai(); return; }
+          dl.means = moi.means; dl.note = moi.note; dl.saved = true; dl.mEdit = 1;
+          dongSua(); ve();
+        });
+      }, () => { dongSua(); ve(); }));
+      if (ct.phu) ct.phu(hostEl, dl);
+      place(); requestAnimationFrame(place);
+    }
+
+    ve();
+  }
+
+  /** Gửi một bản lưu/sửa lên service worker. */
+  function guiLuu(entry, dict, moi, coSua, goc, xong) {
+    const e = Object.assign({}, entry, { means: moi.means });
+    e.note = moi.note || "";
+    if (coSua) { e.mEdit = 1; if (goc && goc.length) e.mOrig = goc; }
+    chrome.runtime.sendMessage({ type: "SAVE_WORD", entry: e, dict: dict }, (kq) => {
+      xong(chrome.runtime.lastError ? { ok: false } : (kq || { ok: true }));
+    });
+  }
+
   /* ---------- tab Từ vựng ---------- */
   function veTuVung(pane, res, word) {
     pane.textContent = "";
@@ -309,32 +502,39 @@
         "warning-circle"));
       return;
     }
+    const src = pageSrc(word);
     entries.slice(0, 4).forEach((en) => {
       const wrap = document.createElement("div"); wrap.className = "en";
-      const hd = document.createElement("div"); hd.className = "hd";
-      const left = document.createElement("div");
-      const w = document.createElement("span"); w.className = "w"; w.textContent = en.word; left.appendChild(w);
-      const spk = document.createElement("button"); spk.className = "spk"; spk.type = "button";
-      spk.title = "Phát âm";
-      spk.appendChild(ic("speaker-high", 16));
-      spk.addEventListener("click", (e) => { e.stopPropagation(); speak(en.word); });
-      left.appendChild(spk);
-      if (en.reading) { const r = document.createElement("span"); r.className = "rd"; r.textContent = en.reading; left.appendChild(r); }
-      hd.appendChild(left);
-      hd.appendChild(nutLuu(res.saved && res.saved[en.word], (xong) => {
-        chrome.runtime.sendMessage({
-          type: "SAVE_WORD",
-          entry: Object.assign({}, en, { src: pageSrc(word) }),
-          dict: "javi"
-        }, xong);
-      }));
-      wrap.appendChild(hd);
-      if (en.means && en.means.length) {
-        const ul = document.createElement("ul");
-        en.means.slice(0, 4).forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
-        wrap.appendChild(ul);
-      }
       pane.appendChild(wrap);
+      // Nghĩa Mazii trả về cũng sửa được như mọi thứ khác; nếu lần trước đã sửa
+      // rồi thì popup hiện thẳng bản của bạn, không hiện lại bản máy.
+      const daCo = (res.saved && res.saved[en.word]) || null;
+      const goc = (en.means || []).slice(0, 8);
+      theSuaDuoc(wrap, {
+        dl: {
+          means: (daCo && daCo.mEdit ? daCo.means : goc).slice(0, 6),
+          note: (daCo && daCo.note) || "",
+          saved: !!daCo,
+          mEdit: daCo && daCo.mEdit ? 1 : 0
+        },
+        dau: (el) => {
+          const w = document.createElement("span"); w.className = "w"; w.textContent = en.word; el.appendChild(w);
+          const spk = document.createElement("button"); spk.className = "spk"; spk.type = "button";
+          spk.title = "Phát âm";
+          spk.appendChild(ic("speaker-high", 16));
+          spk.addEventListener("click", (e) => { e.stopPropagation(); speak(en.word); });
+          el.appendChild(spk);
+          if (en.reading) { const r = document.createElement("span"); r.className = "rd"; r.textContent = en.reading; el.appendChild(r); }
+        },
+        veNghia: (el, dl) => {
+          if (!dl.means.length) return;
+          const ul = document.createElement("ul");
+          dl.means.forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
+          el.appendChild(ul);
+        },
+        gui: (moi, coSua, xong) =>
+          guiLuu(Object.assign({}, en, { src: src }), "javi", moi, coSua, goc, xong)
+      });
     });
   }
 
@@ -359,31 +559,34 @@
       row.appendChild(ch);
 
       const body = document.createElement("div"); body.className = "body";
-      const hd = document.createElement("div"); hd.className = "hd";
-      const left = document.createElement("div");
-      const hv = document.createElement("div"); hv.className = "hvn";
-      hv.textContent = k.hv || "—";
-      left.appendChild(hv);
-      const meta = window.HanTu ? window.HanTu.META(k) : "";
-      if (meta) { const m = document.createElement("div"); m.className = "meta"; m.textContent = meta; left.appendChild(m); }
-      hd.appendChild(left);
-      hd.appendChild(nutLuu(daLuu[k.ch], (xong) => {
-        chrome.runtime.sendMessage({
-          type: "SAVE_WORD",
-          entry: window.HanTu.MUC(k),
-          dict: window.HanTu.HUONG
-        }, xong);
-      }));
-      body.appendChild(hd);
-
-      const ngh = (window.HanTu ? window.HanTu.MUC(k).means : (k.m || [])).slice(0, 4);
-      if (ngh.length) {
-        const ul = document.createElement("ul");
-        ngh.forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
-        body.appendChild(ul);
-      }
       row.appendChild(body);
       pane.appendChild(row);
+
+      const muc = window.HanTu ? window.HanTu.MUC(k) : { word: k.ch, means: (k.m || []) };
+      const goc = (muc.means || []).slice(0, 8);
+      const daCo = daLuu[k.ch] || null;
+      theSuaDuoc(body, {
+        dl: {
+          means: (daCo && daCo.mEdit ? daCo.means : goc).slice(0, 6),
+          note: (daCo && daCo.note) || "",
+          saved: !!daCo,
+          mEdit: daCo && daCo.mEdit ? 1 : 0
+        },
+        dau: (el) => {
+          const hv = document.createElement("span"); hv.className = "hvn";
+          hv.textContent = k.hv || "—";
+          el.appendChild(hv);
+          const meta = window.HanTu ? window.HanTu.META(k) : "";
+          if (meta) { const m = document.createElement("div"); m.className = "meta"; m.textContent = meta; el.appendChild(m); }
+        },
+        veNghia: (el, dl) => {
+          if (!dl.means.length) return;
+          const ul = document.createElement("ul");
+          dl.means.forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
+          el.appendChild(ul);
+        },
+        gui: (moi, coSua, xong) => guiLuu(muc, window.HanTu.HUONG, moi, coSua, goc, xong)
+      });
     });
   }
 
@@ -394,27 +597,37 @@
       pane.appendChild(trangThai((res && res.error) || "Không dịch được.", "warning-circle"));
       return;
     }
-    const hd = document.createElement("div"); hd.className = "hd";
-    const tr = document.createElement("div"); tr.className = "tr"; tr.textContent = res.text;
-    hd.appendChild(tr);
-    hd.appendChild(nutLuu(false, (xong) => {
-      chrome.runtime.sendMessage({
-        type: "SAVE_WORD",
-        entry: { word: text, reading: res.reading || "", means: [res.text], kind: "sent", src: pageSrc(text) },
-        dict: "javi"
-      }, xong);
-    }));
-    pane.appendChild(hd);
-
-    // Phiên âm (romaji) của câu tiếng Nhật — lưu kèm để Sổ tay và màn Học vẫn thấy.
-    if (res.reading) {
-      const rd = document.createElement("div"); rd.className = "furi";
-      rd.appendChild(ic("speaker-high", 14));
-      const rt = document.createElement("span"); rt.textContent = res.reading; rd.appendChild(rt);
-      pane.appendChild(rd);
-    }
-    const src = document.createElement("div"); src.className = "src"; src.textContent = text;
-    pane.appendChild(src);
+    const goc = [res.text];
+    const daCo = res.saved || null;
+    const muc = { word: text, reading: res.reading || "", means: goc, kind: "sent", src: pageSrc(text) };
+    theSuaDuoc(pane, {
+      dl: {
+        means: (daCo && daCo.mEdit ? daCo.means : goc),
+        note: (daCo && daCo.note) || "",
+        saved: !!daCo,
+        mEdit: daCo && daCo.mEdit ? 1 : 0
+      },
+      // Bản dịch chính LÀ phần sửa được, nên phần đầu thẻ để trống — lúc đang
+      // sửa thì ô soạn thảo thế chỗ nó luôn.
+      dau: null,
+      veNghia: (el, dl) => {
+        const tr = document.createElement("div"); tr.className = "tr";
+        tr.textContent = dl.means.join(" / ");
+        el.appendChild(tr);
+      },
+      phu: (el) => {
+        // Phiên âm (romaji) của câu tiếng Nhật — lưu kèm để Sổ tay và màn Học vẫn thấy.
+        if (res.reading) {
+          const rd = document.createElement("div"); rd.className = "furi";
+          rd.appendChild(ic("speaker-high", 14));
+          const rt = document.createElement("span"); rt.textContent = res.reading; rd.appendChild(rt);
+          el.appendChild(rd);
+        }
+        const s = document.createElement("div"); s.className = "src"; s.textContent = text;
+        el.appendChild(s);
+      },
+      gui: (moi, coSua, xong) => guiLuu(muc, "javi", moi, coSua, goc, xong)
+    });
   }
 
   /* ---------- mở popup ---------- */
@@ -675,13 +888,17 @@
     } catch (e) { /* bỏ qua */ }
   })();
 
+  // Đang mở ô sửa thì popup KHÔNG được tự tắt: bấm ra ngoài, Esc hay chuyển cửa
+  // sổ giữa chừng mà mất luôn đoạn vừa gõ thì lần sau chẳng ai dám sửa nữa.
+  // Muốn đóng thì bấm Huỷ (hoặc Esc khi con trỏ đang ở trong ô soạn thảo).
   document.addEventListener("mousedown", (e) => {
     lastCtrl = e.ctrlKey || e.metaKey;
-    if (host && !e.composedPath().includes(host)) close();   // bấm ra ngoài -> tắt
+    if (host && !soOSuaDangMo && !e.composedPath().includes(host)) close();   // bấm ra ngoài -> tắt
   }, true);
 
   document.addEventListener("mouseup", (e) => {
     if (host && e.composedPath().includes(host)) return;
+    if (soOSuaDangMo) return;          // đang sửa dở: bôi đen chỗ khác cũng không cướp popup
     if (!S.inline) return;
     if (S.requireCtrl && !(lastCtrl || e.ctrlKey || e.metaKey)) return;
     setTimeout(() => {
@@ -694,7 +911,7 @@
     }, 10);
   });
 
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
-  window.addEventListener("blur", close);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !soOSuaDangMo) close(); });
+  window.addEventListener("blur", () => { if (!soOSuaDangMo) close(); });
   window.addEventListener("resize", () => { if (host) place(); });
 })();

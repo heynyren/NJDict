@@ -185,8 +185,8 @@
 
     const cs = await capBangYouTube();
     if (cs.length) return { cue: cs, cach: "bang" };
-    throw new Error("YouTube không cho tải phụ đề, mà cũng không mở được bảng bản chép lời của họ. "
-      + "Thử bấm “…” dưới video → “Hiện bản chép lời”, rồi bấm Thử lại.");
+    throw new Error("YouTube không cho tải phụ đề, mà cũng chưa mở được bảng bản chép lời của họ. "
+      + "Bấm “…” dưới video → “Hiện bản chép lời” — hiện ra là chỗ này tự lấy, không cần bấm gì thêm.");
   }
 
   /* ---- Đường 3: đọc lại bảng bản chép lời của chính YouTube ---- */
@@ -202,16 +202,51 @@
 
   function doanBang() { return document.querySelectorAll("ytd-transcript-segment-renderer"); }
 
+  /** Nút mở bản chép lời của YouTube — thử theo cấu trúc trước, rồi theo nhãn. */
+  function timNutChepLoi() {
+    const a = document.querySelector(
+      "ytd-video-description-transcript-section-renderer button, " +
+      "ytd-video-description-transcript-section-renderer ytd-button-renderer button");
+    if (a) return a;
+    // YouTube đổi cấu trúc HTML luôn xoành xoạch, nhưng CHỮ trên nút thì bền hơn.
+    const nhan = /transcript|bản chép lời|文字起こし|스크립트/i;
+    const ds = document.querySelectorAll("button, tp-yt-paper-button, yt-button-shape button");
+    for (const b of ds) {
+      const chu = (b.getAttribute("aria-label") || "") + " " + (b.textContent || "");
+      if (nhan.test(chu)) return b;
+    }
+    return null;
+  }
+
+  /**
+   * Chờ tới khi bảng bản chép lời của YouTube CÓ CHỮ.
+   *
+   * Dùng MutationObserver chứ không đếm nhịp cho đủ số lần: video một tiếng thì
+   * YouTube dựng bảng lâu hơn hẳn video năm phút, mà đặt sẵn một hạn cứng thì
+   * kiểu gì cũng có video vượt qua — và lúc đó người dùng nhìn thấy bảng của họ
+   * đầy chữ ngay trên màn hình trong khi mình báo "không mở được", vô lý.
+   */
+  function choDoan(han) {
+    return new Promise((giai) => {
+      if (doanBang().length) { giai(true); return; }
+      let xong = false;
+      const thoi = (v) => { if (xong) return; xong = true; qs.disconnect(); clearTimeout(h); giai(v); };
+      const qs = new MutationObserver(() => { if (doanBang().length) thoi(true); });
+      qs.observe(document.body, { childList: true, subtree: true });
+      const h = setTimeout(() => thoi(false), han || 20000);
+    });
+  }
+
   async function capBangYouTube() {
+    let taMo = false;                       // mình mở hay bảng vốn đã mở sẵn
     if (!doanBang().length) {
       // Nút "bản chép lời" nằm trong phần mô tả, mà phần mô tả thì đang thu gọn.
-      const mo = document.querySelector("ytd-text-inline-expander #expand, tp-yt-paper-button#expand");
-      if (mo) { mo.click(); await doi(400); }
-      const nut = document.querySelector(
-        "ytd-video-description-transcript-section-renderer button, " +
-        "ytd-video-description-transcript-section-renderer ytd-button-renderer button");
-      if (nut) nut.click();
-      for (let i = 0; i < 40 && !doanBang().length; i++) await doi(200);
+      const mo = document.querySelector(
+        "#description-inline-expander #expand, ytd-text-inline-expander #expand, tp-yt-paper-button#expand");
+      if (mo) { mo.click(); await doi(500); }
+      const nut = timNutChepLoi();
+      if (nut) { nut.click(); taMo = true; }
+      await choDoan(20000);
     }
 
     const ds = [];
@@ -226,10 +261,13 @@
     // Bảng của họ không có mốc theo từ, nên mẩu nhỏ nhất ở đây là một dòng —
     // vẫn đủ để tô sáng nhỏ hơn câu.
 
-    // Đóng bảng của họ lại: để mở thì nó chiếm mất cột phải, đẩy bảng này xuống.
-    const bang = document.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]');
-    const dong = bang && bang.querySelector("#visibility-button button");
-    if (dong) dong.click();
+    // Chỉ đóng bảng nếu CHÍNH MÌNH mở nó ra. Bạn tự mở để đọc mà nó tự đóng lại
+    // thì khó chịu hơn nhiều so với việc bảng này bị đẩy xuống một đoạn.
+    if (taMo) {
+      const bang = document.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]');
+      const dong = bang && bang.querySelector("#visibility-button button");
+      if (dong) dong.click();
+    }
     return ds;
   }
 
@@ -857,7 +895,28 @@
       batTheoDoi();
     } catch (e) {
       trangThai((e && e.message) || "Không tải được lời thoại.", "warning-circle", napCue);
+      ngongBangYouTube();
     }
+  }
+
+  /**
+   * Cả ba đường tắc thì đừng bỏ cuộc hẳn: ngồi chờ bảng bản chép lời của YouTube
+   * xuất hiện rồi tự nhặt lấy.
+   *
+   * Có hai lối dẫn tới đây, và cả hai đều kết thúc bằng việc bảng của họ hiện ra:
+   * hoặc YouTube dựng bảng chậm hơn hạn chờ, hoặc bạn tự bấm "…" → "Hiện bản
+   * chép lời" theo lời nhắc. Bắt bạn bấm thêm nút Thử lại trong khi chữ đã nằm
+   * sờ sờ trên màn hình là thừa một bước vô duyên.
+   */
+  let dangNgong = false;
+  async function ngongBangYouTube() {
+    if (dangNgong) return;
+    dangNgong = true;
+    const v = S.v;
+    try {
+      const co = await choDoan(5 * 60000);
+      if (co && S.v === v && S.host && S.host.isConnected) await napCue();
+    } finally { dangNgong = false; }
   }
 
   async function khoiDong(v) {

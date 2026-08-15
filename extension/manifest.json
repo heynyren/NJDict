@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NJDict",
-  "version": "4.5",
+  "version": "4.5.1",
   "description": "Bôi đen từ tiếng Nhật trên web hoặc PDF để tra nghĩa ngay: từ vựng, âm Hán Việt, sổ tay và ôn tập.",
   "permissions": [
     "contextMenus",
@@ -25,6 +25,16 @@
     "service_worker": "background.js"
   },
   "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "phu-de-trang.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
     {
       "matches": [
         "<all_urls>"

@@ -45,6 +45,9 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
   thở được **ghép lại thành câu** trước khi dịch hay lưu. Mục lưu về sổ tay mang theo
   cả video lẫn **mốc giây**, nên "Nghe lại" là nhảy đúng chỗ người ta đang nói câu đó —
   chắc hơn hẳn cách dò lại một đoạn trên trang web. Xem `extension/phu-de.js`.
+  Có **ba đường lấy phụ đề** vì YouTube đang siết dần đường `timedtext` (từ chối
+  bằng cách trả 200 kèm thân rỗng): hỏi trình phát trong trang, fetch cùng nguồn,
+  và cuối cùng là đọc lại bảng bản chép lời của chính YouTube.
 
 ## Quy trình phát triển / nâng cấp
 

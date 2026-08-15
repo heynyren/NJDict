@@ -58,6 +58,32 @@
     return null;
   }
 
+  /* ---- Cầu nối sang thế giới của trang (xem phu-de-trang.js) ---- */
+
+  let soHoi = 0;
+  function hoiTrang(viec, url) {
+    return new Promise((giai) => {
+      const id = "njd" + (++soHoi);
+      let xong = false;
+      const nghe = (e) => {
+        const d = e.data;
+        if (e.source !== window || !d || d.__njd !== "tra" || d.id !== id) return;
+        xong = true; window.removeEventListener("message", nghe); giai(d.kq || null);
+      };
+      window.addEventListener("message", nghe);
+      window.postMessage({ __njd: "hoi", id: id, viec: viec, url: url }, "*");
+      // Không có bên kia trả lời (trang chặn, hoặc Chrome cũ không cho world:MAIN)
+      // thì đừng treo mãi — còn hai đường khác để đi.
+      setTimeout(() => { if (!xong) { window.removeEventListener("message", nghe); giai(null); } }, 4000);
+    });
+  }
+
+  /** Thân trả về có đúng là JSON không — YouTube hay trả 200 kèm thân RỖNG. */
+  function laJson(t) {
+    const x = (t || "").trim();
+    return x.length > 2 && (x[0] === "{" || x[0] === "[");
+  }
+
   /**
    * Danh sách bản phụ đề của một video.
    *
@@ -68,10 +94,16 @@
    * có sẵn cookie và không cần xin thêm quyền nào.
    */
   async function layBanPhuDe(v) {
-    const r = await fetch("/watch?v=" + encodeURIComponent(v), { credentials: "include" });
-    if (!r.ok) throw new Error("Không tải được trang video (HTTP " + r.status + ")");
-    const html = await r.text();
-    const pr = catJSON(html, "ytInitialPlayerResponse");
+    // Hỏi thẳng trình phát trước: nhanh, và chắc chắn là của ĐÚNG video đang mở.
+    let pr = null;
+    const q = await hoiTrang("player");
+    if (q && q.ok && q.pr && q.pr.videoDetails && q.pr.videoDetails.videoId === v) pr = q.pr;
+
+    if (!pr) {
+      const r = await fetch("/watch?v=" + encodeURIComponent(v), { credentials: "include" });
+      if (!r.ok) throw new Error("Không tải được trang video (HTTP " + r.status + ")");
+      pr = catJSON(await r.text(), "ytInitialPlayerResponse");
+    }
     if (!pr) throw new Error("Không đọc được dữ liệu trình phát");
     const ds = pr.videoDetails || {};
     const ct = ((pr.captions || {}).playerCaptionsTracklistRenderer || {}).captionTracks || [];
@@ -87,11 +119,8 @@
     };
   }
 
-  /** Tải một bản phụ đề về dạng [{t, d, s}] (giây, giây, chữ). */
-  async function layCue(ban) {
-    const r = await fetch(ban.url + "&fmt=json3", { credentials: "include" });
-    if (!r.ok) throw new Error("Không tải được phụ đề (HTTP " + r.status + ")");
-    const d = await r.json();
+  function docJson3(txt) {
+    const d = JSON.parse(txt);
     return (d.events || [])
       .filter((e) => e.segs)
       .map((e) => ({
@@ -100,6 +129,85 @@
         s: e.segs.map((x) => x.utf8 || "").join("").replace(/\s+/g, " ").trim()
       }))
       .filter((c) => c.s);
+  }
+
+  /**
+   * Tải một bản phụ đề về dạng [{t, d, s}] (giây, giây, chữ).
+   *
+   * Ba đường, đi lần lượt cho tới khi có chữ:
+   *   1. fetch TỪ TRONG TRANG — đúng ngữ cảnh trình phát, cửa còn rộng nhất.
+   *   2. fetch từ content script — cùng nguồn, có cookie.
+   *   3. nhờ chính YouTube: mở bảng "bản chép lời" của họ rồi đọc DOM.
+   *
+   * Vì sao phải ba đường: YouTube đang siết `timedtext`, và khi từ chối thì nó
+   * trả về 200 kèm thân RỖNG chứ không báo lỗi tử tế. Đường 3 chậm và xấu, bù
+   * lại gần như không bao giờ hỏng — vì phần khó (giấy phép, mã thông báo) do
+   * chính YouTube làm, mình chỉ đọc lại kết quả.
+   */
+  async function layCue(ban) {
+    const u = ban.url + "&fmt=json3";
+    let txt = "";
+
+    const a = await hoiTrang("fetch", u);
+    if (a && a.ok && laJson(a.text)) txt = a.text;
+
+    if (!txt) {
+      try {
+        const r = await fetch(u, { credentials: "include" });
+        if (r.ok) { const t = await r.text(); if (laJson(t)) txt = t; }
+      } catch (e) { /* rơi xuống đường 3 */ }
+    }
+
+    if (txt) {
+      try { const cs = docJson3(txt); if (cs.length) return { cue: cs, cach: "api" }; } catch (e) { /* rơi xuống */ }
+    }
+
+    const cs = await capBangYouTube();
+    if (cs.length) return { cue: cs, cach: "bang" };
+    throw new Error("YouTube không cho tải phụ đề, mà cũng không mở được bảng bản chép lời của họ. "
+      + "Thử bấm “…” dưới video → “Hiện bản chép lời”, rồi bấm Thử lại.");
+  }
+
+  /* ---- Đường 3: đọc lại bảng bản chép lời của chính YouTube ---- */
+
+  const doi = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /** "1:06" -> 66; "1:02:03" -> 3723. */
+  function giayTu(s) {
+    const p = String(s || "").trim().split(":").map((x) => parseInt(x, 10) || 0);
+    if (!p.length) return 0;
+    return p.reduce((a, b) => a * 60 + b, 0);
+  }
+
+  function doanBang() { return document.querySelectorAll("ytd-transcript-segment-renderer"); }
+
+  async function capBangYouTube() {
+    if (!doanBang().length) {
+      // Nút "bản chép lời" nằm trong phần mô tả, mà phần mô tả thì đang thu gọn.
+      const mo = document.querySelector("ytd-text-inline-expander #expand, tp-yt-paper-button#expand");
+      if (mo) { mo.click(); await doi(400); }
+      const nut = document.querySelector(
+        "ytd-video-description-transcript-section-renderer button, " +
+        "ytd-video-description-transcript-section-renderer ytd-button-renderer button");
+      if (nut) nut.click();
+      for (let i = 0; i < 40 && !doanBang().length; i++) await doi(200);
+    }
+
+    const ds = [];
+    doanBang().forEach((el) => {
+      const ts = (el.querySelector(".segment-timestamp") || {}).textContent || "";
+      const tx = (el.querySelector(".segment-text") || {}).textContent || "";
+      const chu = tx.replace(/\s+/g, " ").trim();
+      if (chu) ds.push({ t: giayTu(ts), d: 0, s: chu });
+    });
+    // Bảng của YouTube không cho biết mỗi mẩu dài bao lâu -> suy từ mốc mẩu sau.
+    for (let i = 0; i < ds.length; i++) ds[i].d = (i + 1 < ds.length) ? Math.max(0, ds[i + 1].t - ds[i].t) : 4;
+
+    // Đóng bảng của họ lại: để mở thì nó chiếm mất cột phải, đẩy bảng này xuống.
+    const bang = document.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]');
+    const dong = bang && bang.querySelector("#visibility-button button");
+    if (dong) dong.click();
+    return ds;
   }
 
   /* ================================================================== */
@@ -433,7 +541,8 @@
     danhDau(true);
   }
 
-  function trangThai(chu, iconTen) {
+  /** @param {Function} [thuLai] có thì hiện kèm nút "Thử lại". */
+  function trangThai(chu, iconTen, thuLai) {
     if (!S.oList) return;
     S.oList.textContent = "";
     const d = document.createElement("div"); d.className = "st";
@@ -441,6 +550,14 @@
     const s = document.createElement("span"); s.textContent = chu;
     d.appendChild(s);
     S.oList.appendChild(d);
+    if (thuLai) {
+      const hang = document.createElement("div");
+      hang.style.cssText = "padding:0 13px 12px";
+      const b = nutChip("arrows-clockwise", "Thử lại");
+      b.addEventListener("click", thuLai);
+      hang.appendChild(b);
+      S.oList.appendChild(hang);
+    }
     S.uiDem.textContent = "";
   }
 
@@ -576,13 +693,19 @@
     trangThai("Đang tải lời thoại…");
     S.dich.clear();
     try {
-      const cues = await layCue(ban);
-      S.cau = ghepCau(cues);
+      const kq = await layCue(ban);
+      S.cau = ghepCau(kq.cue);
+      // Lấy qua bảng của YouTube thì bản phụ đề là do HỌ chọn, đổi ở ô này cũng
+      // không có tác dụng — nói thẳng ra thay vì để bấm rồi thấy không đổi gì.
+      S.uiBan.disabled = (kq.cach === "bang");
+      S.uiBan.title = S.uiBan.disabled
+        ? "YouTube đang chặn đường tải phụ đề, phải đọc lại từ bảng của họ — đổi bản ở đây thì hãy đổi trong bảng đó"
+        : "Chọn bản phụ đề";
       if (!S.cau.length) { trangThai("Bản phụ đề này rỗng.", "warning-circle"); return; }
       veDanhSach();
       batTheoDoi();
     } catch (e) {
-      trangThai((e && e.message) || "Không tải được lời thoại.", "warning-circle");
+      trangThai((e && e.message) || "Không tải được lời thoại.", "warning-circle", napCue);
     }
   }
 

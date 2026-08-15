@@ -7,8 +7,8 @@ Repo này gộp **cả hai dự án** để quản lý và nâng cấp qua từn
 
 | Thư mục | Dự án | Phiên bản |
 |---------|-------|-----------|
-| [`extension/`](extension/) | Extension Chrome (máy tính) — tra từ khi bôi đen trên web/PDF | v4.1 |
-| [`android/`](android/) | App Android (Capacitor) — tra từ, sổ tay, học SRS, tiến độ, thông báo | v2.0.1 |
+| [`extension/`](extension/) | Extension Chrome (máy tính) — tra từ khi bôi đen trên web/PDF | v4.2 |
+| [`android/`](android/) | App Android (Capacitor) — tra từ, sổ tay, học SRS, tiến độ, thông báo | v2.1.0 |
 
 Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`ui.css`), bộ icon
 (`icons.js`), phần theo dõi tiến độ (`tien-do.js`), và cùng cơ chế tra cứu API Mazii +
@@ -26,6 +26,11 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
   máy, icon [Phosphor](https://phosphoricons.com) thay cho emoji.
 - **Thao tác Android** — vuốt ngang đổi tab, nút Quay lại lùi từng bước, kéo xuống để
   làm mới. Xem `android/www/cham-vuot.js`.
+- **Bôi đen là ra cả ba** — popup tại chỗ chạy đồng thời tra từ, đọc Hán tự và dịch cả
+  câu, xếp vào ba tab; app không còn tự đoán bạn muốn tra từ hay dịch câu.
+- **Hán tự ngang hàng từ vựng** — mỗi chữ lưu được vào sổ tay, vào sóng học tập, sửa
+  nghĩa và ghi chú được; có chip lọc riêng để học chữ thành buổi riêng. Xem
+  `extension/han-tu.js`.
 
 ## Quy trình phát triển / nâng cấp
 

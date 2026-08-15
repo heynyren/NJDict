@@ -60,7 +60,10 @@ function fmtDate(ts) {
     return d.toLocaleDateString("vi-VN") + " " + d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
   } catch (e) { return ""; }
 }
-function dirLabel(d) { return d === "vija" ? "Việt→Nhật" : "Nhật→Việt"; }
+function dirLabel(d) {
+  if (d === "kanji") return "Hán tự";
+  return d === "vija" ? "Việt→Nhật" : "Nhật→Việt";
+}
 
 /* ==================================================================== */
 /* Lưu trữ                                                              */
@@ -68,6 +71,7 @@ function dirLabel(d) { return d === "vija" ? "Việt→Nhật" : "Nhật→Việ
 
 const ALL = "__all__", NONE = "__none__";
 const LIKE = "__like__", DISLIKE = "__dislike__";
+const HANTU = "__kanji__";
 
 let items = [];   // mục trong sổ (gồm cả bia mộ đã xoá)
 let decks = {};
@@ -237,7 +241,7 @@ async function load() {
   items = Object.entries(s.nb).map(([key, v]) => ({ key, ...v }));
   items.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   // Sổ đang chọn đã bị xoá -> quay về Tất cả.
-  if (current !== ALL && current !== NONE && current !== LIKE && current !== DISLIKE && !deckName(current)) current = ALL;
+  if (current !== ALL && current !== NONE && current !== LIKE && current !== DISLIKE && current !== HANTU && !deckName(current)) current = ALL;
   drawDecks();
   draw();
 }
@@ -252,6 +256,7 @@ function countIn(id) {
   if (id === NONE) return a.filter((it) => !it.deck).length;
   if (id === LIKE) return a.filter((it) => it.fav === 1).length;
   if (id === DISLIKE) return a.filter((it) => it.fav === -1).length;
+  if (id === HANTU) return a.filter((it) => it.dict === "kanji").length;
   return a.filter((it) => it.deck === id).length;
 }
 
@@ -271,6 +276,9 @@ function drawDecks() {
   mk(NONE, "Chưa phân loại", "funnel");
   mk(LIKE, "Thích", "heart");
   mk(DISLIKE, "Không thích", "thumbs-down");
+  // Hán tự tách riêng vì học chữ và học từ là hai buổi khác nhau: một buổi
+  // chỉ chữ thì mỗi chữ được nhìn kỹ, chứ trộn lẫn thì chữ luôn bị từ lấn át.
+  mk(HANTU, "Hán tự", "text-aa");
   activeDecks().forEach((d) => mk(d.id, d.name, "folder-simple"));
 
   const add = el("button", "chip add");
@@ -281,7 +289,7 @@ function drawDecks() {
   bar.appendChild(add);
 
   // Hai nhãn cố định (Thích / Không thích) không cho đổi tên hay xoá.
-  const real = current !== ALL && current !== NONE && current !== LIKE && current !== DISLIKE;
+  const real = current !== ALL && current !== NONE && current !== LIKE && current !== DISLIKE && current !== HANTU;
   $("deckActions").style.display = real ? "" : "none";
 }
 
@@ -570,6 +578,7 @@ function currentActiveSet() {
   if (current === NONE) return a.filter((it) => !it.deck);
   if (current === LIKE) return a.filter((it) => it.fav === 1);
   if (current === DISLIKE) return a.filter((it) => it.fav === -1);
+  if (current === HANTU) return a.filter((it) => it.dict === "kanji");
   return a.filter((it) => it.deck === current);
 }
 
@@ -619,7 +628,7 @@ function draw() {
   const now = Date.now();
 
   for (const it of rows) {
-    const row = el("div", "entry" + (it.kind === "sent" ? " sent" : ""));
+    const row = el("div", "entry" + (it.kind === "sent" ? " sent" : "") + (it.dict === "kanji" ? " kanji" : ""));
     const body = el("div", "body");
 
     /* --- dòng đầu: từ, cách đọc, loa, nhãn --- */
@@ -656,6 +665,10 @@ function draw() {
     /* --- Hán Việt, nghĩa, ghi chú --- */
     const hvStr = hanVietOf(it.word);
     if (hvStr) body.appendChild(el("div", "hv", "Hán Việt: " + hvStr));
+    if (it.dict === "kanji") {
+      const meta = window.HanTu.META(it.kanji);
+      if (meta) body.appendChild(el("div", "t-tiny faint", meta));
+    }
     if (it.means && it.means.length) {
       body.appendChild(el("div", "m", it.means.slice(0, 4).join("; ")));
     }
@@ -782,7 +795,7 @@ function showCard() {
   $("stDone").style.display = "none";
   $("stProg").textContent = "Còn " + session.queue.length + " mục · đã xong " + session.done;
 
-  $("stCard").className = "studycard" + (it.kind === "sent" ? " sent" : "");
+  $("stCard").className = "studycard" + (it.kind === "sent" ? " sent" : "") + (it.dict === "kanji" ? " kanji" : "");
   $("stWord").textContent = it.word;
   $("stWord").className = "cw ja";
   renderStudyFav(it);
@@ -803,6 +816,10 @@ function revealCard() {
   if (!it) return;
   const hvS = hanVietOf(it.word);
   $("stRead").textContent = (it.reading || "") + (hvS ? ((it.reading ? "　·　" : "") + "Hán Việt: " + hvS) : "");
+  if (it.dict === "kanji") {
+    const meta = window.HanTu.META(it.kanji);
+    if (meta) $("stMean").appendChild(el("div", "t-small faint", meta));
+  }
   if (it.means && it.means.length) {
     const ul = document.createElement("ul");
     it.means.slice(0, 5).forEach((m) => ul.appendChild(el("li", null, m)));
@@ -940,6 +957,7 @@ function fileTag() {
   if (current === NONE) return "chuaphanloai";
   if (current === LIKE) return "thich";
   if (current === DISLIKE) return "khongthich";
+  if (current === HANTU) return "hantu";
   return (deckName(current) || "so").replace(/[^\p{L}\p{N}]+/gu, "-").toLowerCase();
 }
 function exportAnki() {

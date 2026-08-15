@@ -1,5 +1,6 @@
 importScripts("kanji-data.js");   // nạp dữ liệu Hán tự (self.KANJI) để tính âm Hán Việt ở nền
 importScripts("tien-do.js");      // self.TienDo — để trộn tiến độ học khi đồng bộ
+importScripts("han-tu.js");       // self.HanTu — Hán tự là một loại mục của sổ tay
 
 // ==== Cấu hình ====
 const CACHE_MAX = 1000;              // số từ giữ trong bộ nhớ đệm
@@ -133,7 +134,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
 
   if (msg.type === "LOOKUP") {
-    handleLookup(msg.word, msg.dict || "javi")
+    handleLookup(msg.word, msg.dict || "javi", msg.chiHanTu)
       .then((r) => sendResponse(r))
       .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
     return true;
@@ -163,35 +164,53 @@ function scheduleSync() {
   syncTimer = setTimeout(() => { syncNow().catch(() => {}); }, 2500);
 }
 
-// ==== Âm Hán Việt (offline) ====
-function isCJK(ch) {
-  const c = ch.codePointAt(0);
-  return (c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3400 && c <= 0x4dbf) || (c >= 0xf900 && c <= 0xfaff);
-}
+// ==== Hán tự (offline) ====
+// Trả về BẢN GHI ĐẦY ĐỦ chứ không chỉ âm Hán Việt: từ khi Hán tự trở thành một
+// loại mục của sổ tay, popup cần đủ on/kun/số nét/JLPT/bộ thủ để dựng thẻ và để
+// lưu lại. Xem han-tu.js.
 function kanjiInfo(word) {
-  const DB = self.KANJI || {};
-  const seen = new Set(), out = [];
-  for (const ch of (word || "")) {
-    if (!isCJK(ch) || seen.has(ch)) continue;
-    seen.add(ch);
-    const d = DB[ch];
-    out.push({ ch, hv: d && d.hv ? d.hv : "", m: d && d.m ? d.m.slice(0, 2) : [] });
-  }
+  return self.HanTu.LIET_KE(word);
+}
+
+/** Chữ nào trong danh sách đã có trong sổ tay rồi. */
+async function savedKanji(list) {
+  const { notebook } = await chrome.storage.local.get("notebook");
+  const nb = notebook || {};
+  const out = {};
+  (list || []).forEach((k) => {
+    const key = self.HanTu.KHOA(k.ch);
+    if (nb[key] && !nb[key].del) out[k.ch] = true;
+  });
   return out;
 }
 
 // ==== Tra từ + bộ nhớ đệm ====
-async function handleLookup(rawWord, dict) {
+/**
+ * @param {boolean} [chiHanTu] chỉ cần danh sách Hán tự, bỏ qua từ điển.
+ *   Dùng khi người dùng bôi đen cả đoạn văn: tra nguyên đoạn như một từ thì
+ *   chắc chắn rỗng, gọi mạng chỉ tổ chậm — nhưng Hán tự trong đoạn thì vẫn
+ *   phải liệt kê đủ.
+ */
+async function handleLookup(rawWord, dict, chiHanTu) {
   const word = (rawWord || "").trim();
   if (!word) return { ok: false, error: "Chưa có từ" };
   const key = dict + ":" + word;
+
+  if (chiHanTu) {
+    const ksO = kanjiInfo(word);
+    return { ok: true, word, dict, entries: [], kanji: ksO, saved: {}, savedKanji: await savedKanji(ksO) };
+  }
 
   const { cache } = await chrome.storage.local.get("cache");
   const c = cache || {};
   const hit = c[key];
   const now = Date.now();
   if (hit && (now - (hit.ts || 0) < CACHE_TTL)) {
-    return { ok: true, word, dict, entries: hit.entries, kanji: kanjiInfo(word), saved: await savedKeys(hit.entries, dict), cached: true };
+    const ksC = kanjiInfo(word);
+    return {
+      ok: true, word, dict, entries: hit.entries, kanji: ksC,
+      saved: await savedKeys(hit.entries, dict), savedKanji: await savedKanji(ksC), cached: true
+    };
   }
 
   const entries = await fetchMazii(word, dict);
@@ -200,7 +219,11 @@ async function handleLookup(rawWord, dict) {
     trimCache(c);
     await chrome.storage.local.set({ cache: c });
   }
-  return { ok: true, word, dict, entries, kanji: kanjiInfo(word), saved: await savedKeys(entries, dict) };
+  const ks = kanjiInfo(word);
+  return {
+    ok: true, word, dict, entries, kanji: ks,
+    saved: await savedKeys(entries, dict), savedKanji: await savedKanji(ks)
+  };
 }
 
 function trimCache(c) {
@@ -258,7 +281,8 @@ async function saveWord(entry, dict) {
   const e = {
     word: entry.word, reading: entry.reading || "", means: entry.means || [], dict, ts: Date.now()
   };
-  if (entry.kind) e.kind = entry.kind;                       // "sent" = câu đã dịch
+  if (entry.kind) e.kind = entry.kind;                       // "sent" = câu đã dịch, "kanji" = một chữ Hán
+  if (entry.kanji) e.kanji = entry.kanji;                    // on/kun/số nét/JLPT/bộ thủ
   if (entry.src && entry.src.url) e.src = entry.src;         // nguồn: {url, title, sel}
   if (old && !old.del) {                                     // lưu lại từ đã có -> GIỮ mọi thứ bạn đã tự làm
     if (old.deck) e.deck = old.deck;
@@ -270,6 +294,7 @@ async function saveWord(entry, dict) {
     // Bản dịch bạn đã sửa tay thì KHÔNG được để máy dịch đè lên. Tra lại cùng
     // một từ là chuyện thường xuyên; mỗi lần tra lại mà mất công hiệu đính thì
     // chẳng ai buồn sửa nữa.
+    if (old.kanji && !e.kanji) e.kanji = old.kanji;
     if (old.mEdit) { e.mEdit = 1; e.means = old.means; if (old.mOrig) e.mOrig = old.mOrig; }
   }
   nb[key] = e;

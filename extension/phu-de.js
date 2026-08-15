@@ -1,0 +1,670 @@
+/**
+ * LỜI THOẠI YOUTUBE — bảng phụ đề bám theo video, nối thẳng vào sổ tay
+ * ====================================================================
+ *
+ * Xem một video tiếng Nhật mà nghe hụt một câu thì bình thường phải: bật phụ
+ * đề của YouTube, tua đi tua lại, chép tay câu đó sang chỗ khác để tra. Đến khi
+ * tra xong thì quên mất mình đang xem tới đâu, và vài hôm sau nhìn lại cái từ
+ * trong sổ cũng chẳng nhớ nó ở video nào, phút thứ mấy.
+ *
+ * File này bỏ hết chỗ đó đi: lời thoại nằm ngay cạnh video, tự sáng dòng đang
+ * nói, bấm dòng nào là tua tới đó, bôi đen chữ nào là ra đúng cái popup ba tab
+ * quen thuộc — và mục lưu về sổ tay mang theo cả **video lẫn mốc giây**, nên
+ * sau này mở nguồn là nhảy về đúng chỗ người ta đang nói câu đó.
+ *
+ * Ba điều đáng nói về cách làm:
+ *
+ * 1. KHÔNG nghe gì cả. Trang xem video đã có sẵn danh sách phụ đề kèm mốc thời
+ *    gian; việc còn lại chỉ là tìm nhị phân theo `video.currentTime`. Nhờ vậy
+ *    "thời gian thực" không tốn mạng, không lệch, và chạy được cả khi tua.
+ *
+ * 2. GHÉP CUE THÀNH CÂU trước khi làm bất cứ việc gì. Phụ đề tự sinh cắt theo
+ *    hơi thở chứ không theo câu — "và cái mà tôi muốn" / "nói ở đây là" / "thiết
+ *    bị đóng cắt". Ném từng mẩu đó đi dịch thì ra rác, mà lưu vào sổ tay thì ra
+ *    những mục cụt đầu cụt đuôi. Xem `ghepCau`.
+ *
+ * 3. Đây KHÔNG phải một loại mục mới. Nó chỉ là một loại **nguồn** mới:
+ *    `src.yt = {v, t}` nằm cạnh `src.url` sẵn có. Nhờ vậy sổ tay, sóng ôn tập,
+ *    sửa nghĩa, ghi chú, xuất Anki, đồng bộ — chạy nguyên, không sửa gì.
+ */
+(() => {
+  "use strict";
+  if (location.hostname.indexOf("youtube.com") < 0) return;
+
+  /* ================================================================== */
+  /* Lấy phụ đề                                                          */
+  /* ================================================================== */
+
+  /**
+   * Cắt một object JSON nhúng trong HTML, đếm ngoặc chứ không dùng biểu thức
+   * chính quy: nội dung bên trong có cả `}` lẫn `;` nằm trong chuỗi, regex sẽ
+   * cắt nhầm ở video đầu tiên có dấu ngoặc trong tiêu đề.
+   */
+  function catJSON(html, khoa) {
+    const i = html.indexOf(khoa);
+    if (i < 0) return null;
+    const b = html.indexOf("{", i);
+    if (b < 0) return null;
+    let sau = 0, trongChuoi = false, thoat = false;
+    for (let k = b; k < html.length; k++) {
+      const c = html[k];
+      if (thoat) { thoat = false; continue; }
+      if (c === "\\") { if (trongChuoi) thoat = true; continue; }
+      if (c === '"') { trongChuoi = !trongChuoi; continue; }
+      if (trongChuoi) continue;
+      if (c === "{") sau++;
+      else if (c === "}") { sau--; if (!sau) { try { return JSON.parse(html.slice(b, k + 1)); } catch (e) { return null; } } }
+    }
+    return null;
+  }
+
+  /**
+   * Danh sách bản phụ đề của một video.
+   *
+   * Tải lại chính trang xem thay vì đọc `ytInitialPlayerResponse` của trang
+   * đang mở: YouTube là ứng dụng một trang, chuyển video KHÔNG tải lại trang,
+   * nên biến toàn cục đó thường vẫn là của video trước. Tự tải theo đúng mã
+   * video thì không bao giờ nhầm. Đây là fetch cùng nguồn từ content script nên
+   * có sẵn cookie và không cần xin thêm quyền nào.
+   */
+  async function layBanPhuDe(v) {
+    const r = await fetch("/watch?v=" + encodeURIComponent(v), { credentials: "include" });
+    if (!r.ok) throw new Error("Không tải được trang video (HTTP " + r.status + ")");
+    const html = await r.text();
+    const pr = catJSON(html, "ytInitialPlayerResponse");
+    if (!pr) throw new Error("Không đọc được dữ liệu trình phát");
+    const ds = pr.videoDetails || {};
+    const ct = ((pr.captions || {}).playerCaptionsTracklistRenderer || {}).captionTracks || [];
+    return {
+      tieuDe: ds.title || "",
+      kenh: ds.author || "",
+      ban: ct.map((t) => ({
+        url: t.baseUrl,
+        ma: t.languageCode || "",
+        ten: (t.name && (t.name.simpleText || (t.name.runs || []).map((x) => x.text).join(""))) || t.languageCode || "?",
+        tuDong: t.kind === "asr"
+      })).filter((t) => t.url)
+    };
+  }
+
+  /** Tải một bản phụ đề về dạng [{t, d, s}] (giây, giây, chữ). */
+  async function layCue(ban) {
+    const r = await fetch(ban.url + "&fmt=json3", { credentials: "include" });
+    if (!r.ok) throw new Error("Không tải được phụ đề (HTTP " + r.status + ")");
+    const d = await r.json();
+    return (d.events || [])
+      .filter((e) => e.segs)
+      .map((e) => ({
+        t: (e.tStartMs || 0) / 1000,
+        d: (e.dDurationMs || 0) / 1000,
+        s: e.segs.map((x) => x.utf8 || "").join("").replace(/\s+/g, " ").trim()
+      }))
+      .filter((c) => c.s);
+  }
+
+  /* ================================================================== */
+  /* Ghép cue thành câu                                                  */
+  /* ================================================================== */
+
+  const CJK = /[　-ヿ㐀-䶿一-鿿＀-￯]/;
+  const HET_CAU = /[。．！？!?…]$|[.!?]["'’”)]?$/;
+
+  /** Nối hai mẩu: tiếng Nhật thì dính liền, tiếng có khoảng trắng thì thêm dấu cách. */
+  function noiChu(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const dinh = CJK.test(a[a.length - 1]) && CJK.test(b[0]);
+    return a + (dinh ? "" : " ") + b;
+  }
+
+  /**
+   * Gộp các cue rời thành câu đọc được.
+   *
+   * Ngắt khi gặp một trong ba điều: hết câu bằng dấu câu, có khoảng lặng đáng kể
+   * trước cue sau, hoặc đã quá dài (phòng người nói một mạch không nghỉ). Không
+   * làm bước này thì mọi thứ phía sau đều hỏng theo: bản dịch vụn, mục lưu vào
+   * sổ tay cụt đầu cụt đuôi, tra từ thì trúng nửa từ bị cắt đôi giữa hai cue.
+   */
+  function ghepCau(cues, opt) {
+    const LANG = (opt && opt.nghi) || 0.9;      // khoảng lặng đủ để coi là hết câu
+    const DAI = (opt && opt.dai) || 140;        // trần độ dài một câu
+    const out = [];
+    let cur = null;
+    for (let i = 0; i < cues.length; i++) {
+      const c = cues[i];
+      if (!cur) cur = { t: c.t, tEnd: c.t + c.d, s: c.s };
+      else { cur.s = noiChu(cur.s, c.s); cur.tEnd = c.t + c.d; }
+
+      const sau = cues[i + 1];
+      const khoangLang = sau ? sau.t - (c.t + c.d) : Infinity;
+      if (HET_CAU.test(cur.s) || khoangLang >= LANG || cur.s.length >= DAI || !sau) {
+        out.push(cur);
+        cur = null;
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  /* ================================================================== */
+  /* Trạng thái                                                          */
+  /* ================================================================== */
+
+  const S = {
+    v: "",              // mã video đang xem
+    tieuDe: "", kenh: "",
+    ban: [], iBan: 0,   // các bản phụ đề + bản đang chọn
+    cau: [],            // câu đã ghép
+    hien: -1,           // chỉ số câu đang nói
+    bam: true,          // tự cuộn theo video
+    songNgu: false,
+    dich: new Map(),    // chỉ số câu -> bản dịch
+    host: null, root: null, oList: null, oTrong: null
+  };
+
+  const dem = (t) => {
+    const g = Math.max(0, Math.floor(t));
+    const gio = Math.floor(g / 3600), phut = Math.floor((g % 3600) / 60), giay = g % 60;
+    const hai = (n) => (n < 10 ? "0" : "") + n;
+    return (gio ? gio + ":" + hai(phut) : phut) + ":" + hai(giay);
+  };
+
+  function video() {
+    return document.querySelector("video.html5-main-video") || document.querySelector("#movie_player video") || document.querySelector("video");
+  }
+
+  /** Nguồn để lưu vào sổ tay: URL + tiêu đề + MỐC GIÂY. */
+  function nguon(i, chu) {
+    const c = S.cau[i];
+    if (!c) return null;
+    const t = Math.max(0, Math.floor(c.t));
+    return {
+      url: "https://www.youtube.com/watch?v=" + S.v,
+      title: S.tieuDe || document.title,
+      sel: (chu || c.s).slice(0, 400),
+      yt: { v: S.v, t: t, dur: Math.max(1, Math.round(c.tEnd - c.t)), kenh: S.kenh }
+    };
+  }
+
+  /* ================================================================== */
+  /* Bảng lời thoại                                                      */
+  /* ================================================================== */
+
+  const CSS = `
+    :host { all: initial; }
+    * { box-sizing: border-box; }
+    .box {
+      --surface: #fff; --surface-2: #f1f4f9; --ink: #131a2a;
+      --ink-2: rgba(19,26,42,.68); --ink-3: rgba(19,26,42,.45);
+      --line: rgba(19,26,42,.09); --accent: #2f4fb5; --accent-soft: rgba(47,79,181,.10);
+      --good: #12855b; --good-soft: rgba(18,133,91,.12);
+      display: flex; flex-direction: column; max-height: 72vh; margin-bottom: 16px;
+      background: var(--surface); color: var(--ink);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      border-radius: 18px; box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 8px 28px rgba(16,24,40,.12);
+      overflow: hidden;
+    }
+    @media (prefers-color-scheme: dark) {
+      .box {
+        --surface: #171b26; --surface-2: #1f2431; --ink: #f2f4f8;
+        --ink-2: rgba(238,242,250,.72); --ink-3: rgba(238,242,250,.44);
+        --line: rgba(255,255,255,.09); --accent: #8aa4ff; --accent-soft: rgba(138,164,255,.16);
+        --good: #2fd18a; --good-soft: rgba(47,209,138,.14);
+        box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.5);
+      }
+    }
+    svg { display: inline-block; vertical-align: -.18em; flex: none; fill: currentColor; }
+    button { font-family: inherit; cursor: pointer; }
+    .top { display: flex; align-items: center; gap: 8px; padding: 11px 13px; }
+    .top .nm { font-size: 13.5px; font-weight: 750; letter-spacing: -.01em; flex: 1; min-width: 0; }
+    .top .n { color: var(--ink-3); font-size: 12px; font-weight: 600; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px; flex: none;
+      border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+      border-radius: 999px; font-size: 11.5px; font-weight: 650; padding: 4px 9px;
+    }
+    .chip:hover { background: var(--surface-2); color: var(--ink); }
+    .chip.on { border-color: transparent; color: var(--accent); background: var(--accent-soft); }
+    .bar { display: flex; align-items: center; gap: 6px; padding: 0 13px 10px; flex-wrap: wrap; }
+    select, .find {
+      font: inherit; font-size: 12px; color: var(--ink); background: var(--surface-2);
+      border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; outline: none;
+    }
+    /* Cột phải của YouTube chỉ rộng ~400px: giữ cả hàng công cụ trên MỘT dòng,
+       không thì "Bám" rơi xuống dòng riêng và bảng cao thêm vô ích. */
+    select { max-width: 108px; }
+    .find { flex: 1 1 70px; min-width: 0; }
+    .find:focus { border-color: var(--accent); }
+    .list { overflow-y: auto; padding: 2px 6px 10px; scroll-behavior: smooth; }
+    .ln {
+      display: flex; gap: 8px; align-items: flex-start; padding: 7px 7px;
+      border-radius: 12px; cursor: text;
+    }
+    .ln:hover { background: var(--surface-2); }
+    .ln.on { background: var(--accent-soft); }
+    .ln .ts {
+      flex: none; font-variant-numeric: tabular-nums; font-size: 11.5px; font-weight: 700;
+      color: var(--accent); background: var(--surface-2); border: none;
+      border-radius: 8px; padding: 3px 6px; margin-top: 1px;
+    }
+    .ln.on .ts { background: var(--surface); }
+    .ln .tx { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+    .ln .vi { display: block; margin-top: 3px; color: var(--ink-2); font-size: 12.5px; }
+    .ln .sv {
+      flex: none; visibility: hidden; border: 1px solid var(--line); background: var(--surface);
+      color: var(--accent); border-radius: 999px; padding: 3px 7px; font-size: 11px; font-weight: 650;
+      display: inline-flex; align-items: center; gap: 3px;
+    }
+    .ln:hover .sv, .ln.on .sv { visibility: visible; }
+    .ln .sv.done { color: var(--good); background: var(--good-soft); border-color: transparent; }
+    .st { display: flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 13px; padding: 14px 13px; }
+    .back {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px;
+      border: none; background: var(--accent); color: #fff; border-radius: 999px;
+      padding: 6px 13px; font-size: 12px; font-weight: 700; box-shadow: 0 4px 14px rgba(16,24,40,.25);
+      display: none; align-items: center; gap: 5px;
+    }
+    .wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
+    .hide .bar, .hide .wrap { display: none; }
+  `;
+
+  function ic(ten, size) {
+    const s = document.createElement("span");
+    s.style.display = "inline-flex";
+    s.innerHTML = (window.Icon ? window.Icon(ten, { size: size || 15 }) : "");
+    return s.firstChild || s;
+  }
+
+  function nutChip(iconTen, chu, title) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button";
+    if (title) b.title = title;
+    if (iconTen) b.appendChild(ic(iconTen, 13));
+    if (chu) { const t = document.createElement("span"); t.textContent = chu; b.appendChild(t); }
+    return b;
+  }
+
+  /** Chỗ đặt bảng: cột phải của YouTube, ngay trên danh sách video gợi ý. */
+  function choDat() {
+    return document.querySelector("#secondary-inner") || document.querySelector("#secondary");
+  }
+
+  function goBang() {
+    if (S.host) { S.host.remove(); S.host = null; S.root = null; S.oList = null; }
+  }
+
+  function dungBang() {
+    goBang();
+    const noi = choDat();
+    if (!noi) return false;
+
+    const host = document.createElement("div");
+    host.setAttribute("data-njdict-yt", "1");   // content.js nhìn dấu này để không cướp sự kiện
+    host.style.cssText = "all:initial;display:block;margin-bottom:16px";
+    const root = host.attachShadow({ mode: "open" });
+    const st = document.createElement("style"); st.textContent = CSS;
+    root.appendChild(st);
+
+    const box = document.createElement("div"); box.className = "box";
+    root.appendChild(box);
+
+    /* --- thanh tiêu đề --- */
+    const top = document.createElement("div"); top.className = "top";
+    top.appendChild(ic("subtitles", 17));
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = "Lời thoại";
+    top.appendChild(nm);
+    const demCau = document.createElement("span"); demCau.className = "n";
+    top.appendChild(demCau);
+    const nutThu = nutChip("caret-up", "", "Thu gọn");
+    top.appendChild(nutThu);
+    box.appendChild(top);
+
+    /* --- thanh công cụ --- */
+    const bar = document.createElement("div"); bar.className = "bar";
+    const chonBan = document.createElement("select");
+    chonBan.title = "Chọn bản phụ đề";
+    const oTim = document.createElement("input");
+    oTim.className = "find"; oTim.type = "search"; oTim.placeholder = "Tìm…";
+    oTim.title = "Tìm trong lời thoại";
+    const nutSong = nutChip("translate", "Song ngữ", "Hiện kèm bản dịch tiếng Việt");
+    const nutBam = nutChip("crosshair-simple", "Bám", "Tự cuộn theo dòng đang nói");
+    nutSong.classList.toggle("on", S.songNgu);   // giữ lựa chọn khi chuyển video
+    bar.appendChild(chonBan); bar.appendChild(oTim); bar.appendChild(nutSong); bar.appendChild(nutBam);
+    box.appendChild(bar);
+
+    /* --- danh sách --- */
+    const wrap = document.createElement("div"); wrap.className = "wrap";
+    const list = document.createElement("div"); list.className = "list";
+    const back = document.createElement("button"); back.className = "back"; back.type = "button";
+    back.appendChild(ic("arrow-down", 13));
+    const bt = document.createElement("span"); bt.textContent = "Về dòng đang nói"; back.appendChild(bt);
+    wrap.appendChild(list); wrap.appendChild(back);
+    box.appendChild(wrap);
+
+    noi.insertBefore(host, noi.firstChild);
+
+    S.host = host; S.root = root; S.oList = list;
+
+    /* --- hành vi --- */
+    nutThu.addEventListener("click", () => {
+      const thu = box.classList.toggle("hide");
+      nutThu.innerHTML = "";
+      nutThu.appendChild(ic(thu ? "caret-down" : "caret-up", 13));
+      nutThu.title = thu ? "Mở ra" : "Thu gọn";
+    });
+    chonBan.addEventListener("change", () => { S.iBan = +chonBan.value; napCue(); });
+    oTim.addEventListener("input", () => loc(oTim.value.trim()));
+    nutSong.addEventListener("click", () => {
+      S.songNgu = !S.songNgu;
+      nutSong.classList.toggle("on", S.songNgu);
+      veDanhSach();
+    });
+    nutBam.addEventListener("click", () => {
+      S.bam = !S.bam;
+      nutBam.classList.toggle("on", S.bam);
+      if (S.bam) { back.style.display = "none"; cuonToi(S.hien); }
+    });
+    nutBam.classList.add("on");
+    back.addEventListener("click", () => {
+      S.bam = true; nutBam.classList.add("on"); back.style.display = "none"; cuonToi(S.hien);
+    });
+
+    // Người dùng tự cuộn -> ngừng bám, hiện nút quay lại. Thiếu chỗ này thì
+    // không đọc lùi được câu nào: cứ cuộn lên là bị kéo về ngay.
+    let tuTa = false;
+    list.addEventListener("scroll", () => {
+      if (tuTa) return;
+      if (S.bam) { S.bam = false; nutBam.classList.remove("on"); back.style.display = "flex"; }
+    });
+    S.cuonNoiBo = (fn) => { tuTa = true; fn(); setTimeout(() => { tuTa = false; }, 120); };
+
+    // Bôi đen trong bảng -> đúng popup ba tab quen thuộc, kèm mốc giây.
+    root.addEventListener("mouseup", (e) => {
+      setTimeout(() => {
+        const sel = root.getSelection ? root.getSelection() : document.getSelection();
+        const chu = sel ? String(sel).trim() : "";
+        if (!chu || chu.length > 400) return;
+        const ln = e.target && e.target.closest ? e.target.closest(".ln") : null;
+        const i = ln ? +ln.dataset.i : -1;
+        if (!window.__NJD_popup) return;
+        window.__NJD_popup(e.clientX + 12, e.clientY + 16, chu, i >= 0 ? nguon(i, chu) : null);
+      }, 10);
+    });
+
+    S.uiBan = chonBan; S.uiDem = demCau; S.uiBack = back; S.uiTim = oTim;
+    return true;
+  }
+
+  /* --- vẽ danh sách --- */
+  function veDanhSach() {
+    const list = S.oList;
+    if (!list) return;
+    list.textContent = "";
+    S.cau.forEach((c, i) => {
+      const ln = document.createElement("div");
+      ln.className = "ln"; ln.dataset.i = String(i);
+
+      const ts = document.createElement("button");
+      ts.className = "ts"; ts.type = "button"; ts.textContent = dem(c.t);
+      ts.title = "Tua tới đây";
+      ts.addEventListener("click", (e) => { e.stopPropagation(); tuaToi(i); });
+      ln.appendChild(ts);
+
+      const tx = document.createElement("div"); tx.className = "tx";
+      tx.appendChild(document.createTextNode(c.s));
+      if (S.songNgu) {
+        const vi = document.createElement("span"); vi.className = "vi";
+        vi.textContent = S.dich.has(i) ? S.dich.get(i) : "…";
+        tx.appendChild(vi);
+      }
+      ln.appendChild(tx);
+
+      const sv = document.createElement("button");
+      sv.className = "sv"; sv.type = "button"; sv.title = "Lưu câu này vào sổ tay";
+      sv.appendChild(ic("plus", 12));
+      const svt = document.createElement("span"); svt.textContent = "Lưu"; sv.appendChild(svt);
+      sv.addEventListener("click", (e) => { e.stopPropagation(); luuCau(i, sv, svt); });
+      ln.appendChild(sv);
+
+      list.appendChild(ln);
+    });
+    S.uiDem.textContent = S.cau.length ? S.cau.length + " câu" : "";
+    if (S.songNgu) dichHienRa();
+    danhDau(true);
+  }
+
+  function trangThai(chu, iconTen) {
+    if (!S.oList) return;
+    S.oList.textContent = "";
+    const d = document.createElement("div"); d.className = "st";
+    d.appendChild(ic(iconTen || "spinner-gap", 16));
+    const s = document.createElement("span"); s.textContent = chu;
+    d.appendChild(s);
+    S.oList.appendChild(d);
+    S.uiDem.textContent = "";
+  }
+
+  function loc(q) {
+    if (!S.oList) return;
+    const k = q.toLowerCase();
+    S.oList.querySelectorAll(".ln").forEach((ln) => {
+      ln.style.display = (!k || ln.textContent.toLowerCase().indexOf(k) >= 0) ? "" : "none";
+    });
+  }
+
+  /* --- bám theo video --- */
+  function timCau(t) {
+    let lo = 0, hi = S.cau.length - 1, ra = -1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (S.cau[m].t <= t) { ra = m; lo = m + 1; } else hi = m - 1;
+    }
+    return ra;
+  }
+
+  function cuonToi(i) {
+    if (i < 0 || !S.oList || !S.cuonNoiBo) return;
+    const ln = S.oList.querySelector('.ln[data-i="' + i + '"]');
+    if (!ln) return;
+    // Tự tính scrollTop chứ không dùng scrollIntoView: hàm đó cuộn cả các khối
+    // cha, tức là kéo luôn cả trang YouTube bên dưới.
+    S.cuonNoiBo(() => {
+      S.oList.scrollTop = ln.offsetTop - S.oList.clientHeight / 2 + ln.offsetHeight / 2;
+    });
+  }
+
+  function danhDau(epCuon) {
+    if (!S.oList) return;
+    const cu = S.oList.querySelector(".ln.on");
+    if (cu) cu.classList.remove("on");
+    if (S.hien < 0) return;
+    const ln = S.oList.querySelector('.ln[data-i="' + S.hien + '"]');
+    if (ln) ln.classList.add("on");
+    if (S.bam || epCuon) cuonToi(S.hien);
+  }
+
+  let dongHo = null, rvfc = null;
+  function batTheoDoi() {
+    dungTheoDoi();
+    const vd = video();
+    if (!vd) return;
+    const nhip = () => {
+      const i = timCau(vd.currentTime);
+      if (i !== S.hien) {
+        S.hien = i;
+        danhDau(false);
+        if (S.songNgu) dichHienRa();
+      }
+    };
+    if (vd.requestVideoFrameCallback) {
+      const vong = () => { nhip(); rvfc = vd.requestVideoFrameCallback(vong); };
+      rvfc = vd.requestVideoFrameCallback(vong);
+    }
+    // Vẫn giữ một nhịp đếm giờ: requestVideoFrameCallback đứng im khi video
+    // tạm dừng, mà tua lúc đang dừng thì dòng sáng vẫn phải chạy theo.
+    dongHo = setInterval(nhip, 300);
+  }
+  function dungTheoDoi() {
+    if (dongHo) { clearInterval(dongHo); dongHo = null; }
+    if (rvfc != null) { const vd = video(); if (vd && vd.cancelVideoFrameCallback) vd.cancelVideoFrameCallback(rvfc); rvfc = null; }
+  }
+
+  function tuaToi(i) {
+    const vd = video(), c = S.cau[i];
+    if (!vd || !c) return;
+    vd.currentTime = Math.max(0, c.t + 0.02);
+    const p = vd.play();
+    if (p && p.catch) p.catch(() => {});
+    S.hien = i; danhDau(true);
+  }
+
+  /* --- dịch song ngữ (chỉ dịch phần đang nhìn thấy) --- */
+  function dichHienRa() {
+    if (!S.songNgu || !S.oList) return;
+    const list = S.oList;
+    const tren = list.scrollTop - 200, duoi = list.scrollTop + list.clientHeight + 200;
+    const can = [];
+    list.querySelectorAll(".ln").forEach((ln) => {
+      const i = +ln.dataset.i;
+      if (S.dich.has(i)) return;
+      if (ln.offsetTop + ln.offsetHeight < tren || ln.offsetTop > duoi) return;
+      can.push(i);
+    });
+    can.slice(0, 12).forEach((i) => {
+      S.dich.set(i, "");                       // giữ chỗ, khỏi gọi trùng
+      chrome.runtime.sendMessage({ type: "TRANSLATE", text: S.cau[i].s, from: "ja", to: "vi" }, (res) => {
+        const t = (!chrome.runtime.lastError && res && res.ok) ? res.text : "—";
+        S.dich.set(i, t);
+        const ln = S.oList && S.oList.querySelector('.ln[data-i="' + i + '"]');
+        const vi = ln && ln.querySelector(".vi");
+        if (vi) vi.textContent = t;
+      });
+    });
+  }
+
+  /* --- lưu một câu vào sổ tay --- */
+  function luuCau(i, nut, nhan) {
+    const c = S.cau[i];
+    if (!c) return;
+    nut.disabled = true; nhan.textContent = "…";
+    const gui = (nghia) => {
+      chrome.runtime.sendMessage({
+        type: "SAVE_WORD",
+        entry: { word: c.s, reading: "", means: nghia ? [nghia] : [], kind: "sent", src: nguon(i) },
+        dict: "javi"
+      }, () => {
+        nut.classList.add("done"); nut.disabled = false;
+        nut.textContent = ""; nut.appendChild(ic("check", 12));
+        const t = document.createElement("span"); t.textContent = "Đã lưu"; nut.appendChild(t);
+      });
+    };
+    // Lưu kèm luôn bản dịch: một câu trần trụi nằm trong sổ tay thì đến lúc ôn
+    // lại chẳng có gì để lật ra cả.
+    if (S.dich.get(i)) { gui(S.dich.get(i)); return; }
+    chrome.runtime.sendMessage({ type: "TRANSLATE", text: c.s, from: "ja", to: "vi" }, (res) => {
+      gui((!chrome.runtime.lastError && res && res.ok) ? res.text : "");
+    });
+  }
+
+  /* ================================================================== */
+  /* Vòng đời                                                            */
+  /* ================================================================== */
+
+  async function napCue() {
+    const ban = S.ban[S.iBan];
+    if (!ban) { trangThai("Video này không có phụ đề nào.", "subtitles-slash"); return; }
+    trangThai("Đang tải lời thoại…");
+    S.dich.clear();
+    try {
+      const cues = await layCue(ban);
+      S.cau = ghepCau(cues);
+      if (!S.cau.length) { trangThai("Bản phụ đề này rỗng.", "warning-circle"); return; }
+      veDanhSach();
+      batTheoDoi();
+    } catch (e) {
+      trangThai((e && e.message) || "Không tải được lời thoại.", "warning-circle");
+    }
+  }
+
+  async function khoiDong(v) {
+    S.v = v; S.cau = []; S.hien = -1; S.dich.clear(); S.bam = true;
+    if (!dungBang()) return false;
+    trangThai("Đang tìm phụ đề…");
+    try {
+      const d = await layBanPhuDe(v);
+      if (S.v !== v) return true;                       // đã chuyển video khác
+      S.tieuDe = d.tieuDe; S.kenh = d.kenh; S.ban = d.ban;
+      if (!S.ban.length) {
+        trangThai("Video này không có phụ đề — không có gì để đọc.", "subtitles-slash");
+        S.uiBan.style.display = "none";
+        return true;
+      }
+      // Ưu tiên bản người thật làm, tiếng Nhật trước, rồi mới tới bản tự sinh.
+      const diem = (b) => (b.tuDong ? 0 : 2) + (b.ma === "ja" ? 1 : 0);
+      let best = 0;
+      S.ban.forEach((b, i) => { if (diem(b) > diem(S.ban[best])) best = i; });
+      S.iBan = best;
+      S.uiBan.style.display = S.ban.length > 1 ? "" : "none";
+      S.uiBan.innerHTML = "";
+      S.ban.forEach((b, i) => {
+        const o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = b.ten + (b.tuDong ? " (tự động)" : "");
+        S.uiBan.appendChild(o);
+      });
+      S.uiBan.value = String(S.iBan);
+      await napCue();
+    } catch (e) {
+      trangThai((e && e.message) || "Không lấy được phụ đề.", "warning-circle");
+    }
+    return true;
+  }
+
+  function maVideo() {
+    if (location.pathname !== "/watch") return "";
+    return new URLSearchParams(location.search).get("v") || "";
+  }
+
+  let dangCho = null;
+  function xemLai() {
+    const v = maVideo();
+    if (!v) { dungTheoDoi(); goBang(); S.v = ""; return; }
+    if (v === S.v && S.host && S.host.isConnected) return;
+    dungTheoDoi();
+    // Cột phải của YouTube dựng sau khi trang đã "xong", nên thử lại vài nhịp.
+    clearInterval(dangCho);
+    let lan = 0;
+    const thu = async () => {
+      if (maVideo() !== v) { clearInterval(dangCho); return; }
+      if (choDat()) { clearInterval(dangCho); await khoiDong(v); return; }
+      if (++lan > 40) clearInterval(dangCho);
+    };
+    dangCho = setInterval(thu, 300);
+    thu();
+  }
+
+  // YouTube là ứng dụng một trang: chuyển video không tải lại trang.
+  document.addEventListener("yt-navigate-finish", xemLai);
+  let urlCu = location.href;
+  setInterval(() => {
+    if (location.href !== urlCu) { urlCu = location.href; xemLai(); return; }
+    // YouTube dựng lại cột phải khá tuỳ hứng và cuốn theo cả bảng này; dựng lại
+    // khi thấy nó biến mất, chứ không bắt người dùng tải lại trang.
+    if (S.v && (!S.host || !S.host.isConnected) && choDat()) khoiDong(S.v);
+  }, 700);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", xemLai);
+  else xemLai();
+
+  // Sổ tay bảo "về đúng giây đó" -> tua, và sáng đúng dòng.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg || msg.type !== "YT_SEEK") return;
+    if (msg.v && msg.v !== maVideo()) return;
+    const vd = video();
+    if (!vd) return;
+    vd.currentTime = Math.max(0, msg.t || 0);
+    const p = vd.play(); if (p && p.catch) p.catch(() => {});
+    S.bam = true;
+    const i = timCau(msg.t || 0);
+    if (i >= 0) { S.hien = i; danhDau(true); }
+  });
+})();

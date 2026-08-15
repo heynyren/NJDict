@@ -39,6 +39,12 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
   tay và khỏi sóng ôn tập thật, nhưng nghĩa bạn đã hiệu đính và ghi chú thì ở lại.
   Vài tháng sau quên mà tra lại, popup hiện đúng bản bạn từng chốt chứ không gọi máy
   dịch lại từ đầu. Xem `extension/muc.js`.
+- **Lời thoại YouTube** — đang xem video thì bảng lời thoại nằm ngay cột phải: tự sáng
+  dòng đang nói, bấm dòng nào tua tới đó, bôi đen chữ nào ra đúng popup ba tab quen
+  thuộc, có chế độ song ngữ và ô tìm trong lời thoại. Phụ đề tự sinh cắt vụn theo hơi
+  thở được **ghép lại thành câu** trước khi dịch hay lưu. Mục lưu về sổ tay mang theo
+  cả video lẫn **mốc giây**, nên "Nghe lại" là nhảy đúng chỗ người ta đang nói câu đó —
+  chắc hơn hẳn cách dò lại một đoạn trên trang web. Xem `extension/phu-de.js`.
 
 ## Quy trình phát triển / nâng cấp
 

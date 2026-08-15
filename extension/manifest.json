@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NJDict",
-  "version": "4.4.1",
+  "version": "4.5",
   "description": "Bôi đen từ tiếng Nhật trên web hoặc PDF để tra nghĩa ngay: từ vựng, âm Hán Việt, sổ tay và ôn tập.",
   "permissions": [
     "contextMenus",
@@ -33,7 +33,8 @@
         "icons.js",
         "muc.js",
         "han-tu.js",
-        "content.js"
+        "content.js",
+        "phu-de.js"
       ],
       "run_at": "document_idle"
     }

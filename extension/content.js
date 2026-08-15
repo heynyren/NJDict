@@ -62,8 +62,14 @@
       .en { padding: 9px 0; border-bottom: 1px solid var(--line); }
       .en:last-child { border-bottom: none; }
       .hd { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
-      .w { font-size: 20px; font-weight: 750; letter-spacing: -.01em; }
-      .rd { color: var(--accent); font-size: 13px; font-weight: 600; margin-left: 6px; }
+      /* Từ dài thì xuống dòng TRONG phần của nó; nút Lưu/Sửa bên phải đứng
+         yên một khối chứ không trôi vào giữa chữ. */
+      .hd .lft { flex: 1; min-width: 0; }
+      .w { font-size: 20px; font-weight: 750; letter-spacing: -.01em;
+        line-height: 1.3; overflow-wrap: anywhere; }
+      /* Cách đọc xuống hẳn dòng dưới — nhét cạnh từ thì dài là vỡ dòng xen kẽ. */
+      .rd { display: block; margin-top: 2px; color: var(--accent);
+        font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
       .spk { border: none; background: none; color: var(--ink-3); cursor: pointer;
         padding: 4px; border-radius: 8px; display: inline-flex; }
       .spk:hover { color: var(--ink); background: var(--surface-2); }
@@ -426,7 +432,7 @@
 
     function veDau(hienNut) {
       const hd = document.createElement("div"); hd.className = "hd";
-      const left = document.createElement("div");
+      const left = document.createElement("div"); left.className = "lft";
       if (ct.dau) ct.dau(left, dl);
       if (dl.mEdit) {
         const tg = document.createElement("span"); tg.className = "tag";
@@ -524,7 +530,7 @@
           spk.appendChild(ic("speaker-high", 16));
           spk.addEventListener("click", (e) => { e.stopPropagation(); speak(en.word); });
           el.appendChild(spk);
-          if (en.reading) { const r = document.createElement("span"); r.className = "rd"; r.textContent = en.reading; el.appendChild(r); }
+          if (en.reading) { const r = document.createElement("div"); r.className = "rd"; r.textContent = en.reading; el.appendChild(r); }
         },
         veNghia: (el, dl) => {
           if (!dl.means.length) return;

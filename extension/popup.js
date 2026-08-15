@@ -274,9 +274,9 @@ function theSuaDuoc(hostEl, ct) {
 
   function veDau(hienNut) {
     const head = document.createElement("div");
-    head.className = "rowx between";
-    head.style.alignItems = "flex-start";
+    head.className = "hdrow";
     const left = document.createElement("div");
+    left.className = "lft";
     if (ct.dau) ct.dau(left, dl);
     if (dl.mEdit) {
       const tg = document.createElement("span");
@@ -346,7 +346,7 @@ async function renderWord(entries) {
       },
       dau: (el) => {
         const w = document.createElement("span");
-        w.className = "ja"; w.style.cssText = "font-size:21px;font-weight:750;letter-spacing:-.01em";
+        w.className = "ja wja";
         w.textContent = en.word;
         el.appendChild(w);
         const spk = document.createElement("button");
@@ -355,8 +355,8 @@ async function renderWord(entries) {
         spk.addEventListener("click", () => speakJa(en.word));
         el.appendChild(spk);
         if (en.reading) {
-          const r = document.createElement("span");
-          r.style.cssText = "color:var(--accent);font-size:13.5px;font-weight:600;margin-left:6px";
+          const r = document.createElement("div");
+          r.className = "rdline";
           r.textContent = en.reading;
           el.appendChild(r);
         }

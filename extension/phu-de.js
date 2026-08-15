@@ -443,6 +443,8 @@
   }
 
   function goBang() {
+    if (quanSat) { quanSat.disconnect(); quanSat = null; }
+    hangCho.clear(); clearTimeout(henDich);
     if (S.host) { S.host.remove(); S.host = null; S.root = null; S.oList = null; }
   }
 
@@ -522,14 +524,27 @@
       S.bam = true; nutBam.classList.add("on"); back.style.display = "none"; cuonToi(S.hien);
     });
 
-    // Người dùng tự cuộn -> ngừng bám, hiện nút quay lại. Thiếu chỗ này thì
-    // không đọc lùi được câu nào: cứ cuộn lên là bị kéo về ngay.
-    let tuTa = false;
-    list.addEventListener("scroll", () => {
-      if (tuTa) return;
-      if (S.bam) { S.bam = false; nutBam.classList.remove("on"); back.style.display = "flex"; }
-    });
-    S.cuonNoiBo = (fn) => { tuTa = true; fn(); setTimeout(() => { tuTa = false; }, 120); };
+    /*
+     * Người dùng tự cuộn -> ngừng bám, hiện nút quay lại. Thiếu chỗ này thì
+     * không đọc lùi được câu nào: cứ cuộn lên là bị kéo về ngay.
+     *
+     * Nghe THAO TÁC của người dùng (lăn chuột, vuốt, kéo thanh cuộn) chứ KHÔNG
+     * nghe sự kiện "scroll". Bản trước nghe "scroll" rồi cố lọc bỏ những lần
+     * chính mình cuộn bằng một cái cờ hẹn giờ 120ms — và sai, vì danh sách này
+     * cuộn mượt (scroll-behavior: smooth): sự kiện scroll của CHÍNH MÌNH còn
+     * rơi rớt lại rất lâu sau khi cờ đã tắt, nên chế độ Bám cứ tự tắt dù không
+     * ai đụng vào. Vẽ lại danh sách (bật/tắt Song ngữ) cũng đưa scrollTop về 0
+     * và dính đúng cái bẫy đó.
+     */
+    const nguoiDungCuon = () => {
+      if (!S.bam) return;
+      S.bam = false; nutBam.classList.remove("on"); back.style.display = "flex";
+    };
+    list.addEventListener("wheel", nguoiDungCuon, { passive: true });
+    list.addEventListener("touchmove", nguoiDungCuon, { passive: true });
+    // Bấm vào vùng thanh cuộn: clientWidth không tính thanh cuộn, nên offsetX
+    // vượt quá nó nghĩa là đang kéo thanh cuộn chứ không bấm vào chữ.
+    list.addEventListener("mousedown", (e) => { if (e.offsetX > list.clientWidth) nguoiDungCuon(); });
 
     // Bôi đen trong bảng -> đúng popup ba tab quen thuộc, kèm mốc giây.
     root.addEventListener("mouseup", (e) => {
@@ -603,7 +618,7 @@
       list.appendChild(ln);
     });
     S.uiDem.textContent = S.cau.length ? S.cau.length + " câu" : "";
-    if (S.songNgu) dichHienRa();
+    batQuanSat();
     danhDau(true);
   }
 
@@ -646,14 +661,12 @@
   }
 
   function cuonToi(i) {
-    if (i < 0 || !S.oList || !S.cuonNoiBo) return;
+    if (i < 0 || !S.oList) return;
     const ln = S.oList.querySelector('.ln[data-i="' + i + '"]');
     if (!ln) return;
     // Tự tính scrollTop chứ không dùng scrollIntoView: hàm đó cuộn cả các khối
     // cha, tức là kéo luôn cả trang YouTube bên dưới.
-    S.cuonNoiBo(() => {
-      S.oList.scrollTop = ln.offsetTop - S.oList.clientHeight / 2 + ln.offsetHeight / 2;
-    });
+    S.oList.scrollTop = ln.offsetTop - S.oList.clientHeight / 2 + ln.offsetHeight / 2;
   }
 
   /** Mẩu đang được nói trong câu i, hoặc -1. */
@@ -703,7 +716,7 @@
       if (i !== S.hien) {
         S.hien = i; S.manh = -1;
         danhDau(false);
-        if (S.songNgu) dichHienRa();
+        dichCauDangNoi(i);
       }
       const k = timManh(i, t);
       if (k !== S.manh) { S.manh = k; danhDauManh(k); }
@@ -730,28 +743,71 @@
     S.hien = i; S.manh = -1; danhDau(true);
   }
 
-  /* --- dịch song ngữ (chỉ dịch phần đang nhìn thấy) --- */
-  function dichHienRa() {
-    if (!S.songNgu || !S.oList) return;
-    const list = S.oList;
-    const tren = list.scrollTop - 200, duoi = list.scrollTop + list.clientHeight + 200;
-    const can = [];
-    list.querySelectorAll(".ln").forEach((ln) => {
-      const i = +ln.dataset.i;
-      if (S.dich.has(i)) return;
-      if (ln.offsetTop + ln.offsetHeight < tren || ln.offsetTop > duoi) return;
-      can.push(i);
-    });
-    can.slice(0, 12).forEach((i) => {
-      S.dich.set(i, "");                       // giữ chỗ, khỏi gọi trùng
-      chrome.runtime.sendMessage({ type: "TRANSLATE", text: S.cau[i].s, from: "ja", to: "vi" }, (res) => {
-        const t = (!chrome.runtime.lastError && res && res.ok) ? res.text : "—";
+  /* --- dịch song ngữ --- */
+  /*
+   * Ba thứ làm bản cũ ì ạch, sửa cả ba:
+   *
+   *  · Chỉ dịch thêm mỗi khi video sang câu mới. Cuộn xuống đọc trước thì cứ
+   *    nằm im ở dấu "…" cho tới lúc video chạy tới — nhìn như treo. Nay dùng
+   *    IntersectionObserver: dòng nào lọt vào tầm mắt là dịch dòng đó.
+   *
+   *  · Mỗi câu một tin nhắn riêng sang nền, mà mỗi lượt dịch lẻ lại đọc-rồi-ghi
+   *    CẢ bộ đệm vào chrome.storage. Gần trăm câu thành gần trăm vòng như thế.
+   *    Nay gom thành một tin nhắn cho cả loạt (TRANSLATE_MANY).
+   *
+   *  · Bản cũ đo offsetTop của TỪNG dòng mỗi lần chạy — bắt trình duyệt tính
+   *    lại bố cục cả bảng. IntersectionObserver không phải đo gì cả.
+   */
+
+  let quanSat = null;
+  const hangCho = new Set();
+  let henDich = null;
+
+  function batQuanSat() {
+    if (quanSat) { quanSat.disconnect(); quanSat = null; }
+    if (!S.songNgu || !S.oList || typeof IntersectionObserver !== "function") return;
+    quanSat = new IntersectionObserver((mps) => {
+      let co = false;
+      mps.forEach((m) => {
+        if (!m.isIntersecting) return;
+        const i = +m.target.dataset.i;
+        if (S.dich.has(i)) return;
+        hangCho.add(i); co = true;
+      });
+      if (co) henGui();
+    }, { root: S.oList, rootMargin: "400px 0px" });
+    // Dịch sẵn cả phần ngay ngoài khung nhìn để cuộn tới là đã có chữ.
+    S.oList.querySelectorAll(".ln").forEach((ln) => quanSat.observe(ln));
+  }
+
+  /** Gom vài nhịp rồi mới gửi: cuộn nhanh sẽ bắn ra hàng chục lượt liền nhau. */
+  function henGui() {
+    clearTimeout(henDich);
+    henDich = setTimeout(guiDich, 120);
+  }
+
+  function guiDich() {
+    const ids = [...hangCho].filter((i) => !S.dich.has(i) && S.cau[i]).slice(0, 40);
+    hangCho.clear();
+    if (!ids.length) return;
+    ids.forEach((i) => S.dich.set(i, ""));      // giữ chỗ, khỏi gửi trùng
+    const texts = ids.map((i) => S.cau[i].s.trim());
+    chrome.runtime.sendMessage({ type: "TRANSLATE_MANY", texts: texts, from: "ja", to: "vi" }, (res) => {
+      const ra = (!chrome.runtime.lastError && res && res.ok) ? (res.texts || []) : [];
+      ids.forEach((i, k) => {
+        const t = ra[k] || "—";
         S.dich.set(i, t);
         const ln = S.oList && S.oList.querySelector('.ln[data-i="' + i + '"]');
         const vi = ln && ln.querySelector(".vi");
         if (vi) vi.textContent = t;
       });
     });
+  }
+
+  /** Đảm bảo câu đang nói có bản dịch, kể cả khi bạn đã cuộn đi chỗ khác. */
+  function dichCauDangNoi(i) {
+    if (!S.songNgu || i < 0 || S.dich.has(i)) return;
+    hangCho.add(i); henGui();
   }
 
   /* --- lưu một câu vào sổ tay --- */
@@ -786,7 +842,7 @@
     const ban = S.ban[S.iBan];
     if (!ban) { trangThai("Video này không có phụ đề nào.", "subtitles-slash"); return; }
     trangThai("Đang tải lời thoại…");
-    S.dich.clear();
+    S.dich.clear(); hangCho.clear();
     try {
       const kq = await layCue(ban);
       S.cau = ghepCau(kq.cue);

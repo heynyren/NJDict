@@ -558,16 +558,39 @@ async function runLookup(word, src) {
   const w = (word || "").trim();
   if (!w) return;
   $("q").value = w;
-  if (w.length > 30 || /[。．！？\n]/.test(w)) { switchSub("trans"); return; }   // là câu -> dịch cả câu
-  switchSub("word");
+  // Hán tự luôn có mặt, kể cả khi đang xem tab Dịch.
   const chars = extractKanji(w);
   $("tabKanji").querySelector(".lb").textContent = "Hán tự" + (chars.length ? " " + chars.length : "");
   renderKanji(chars);
+
+  // Mở sẵn tab hợp lý nhất, nhưng cả ba tab đều có dữ liệu — xem ghi chú ở
+  // trongNhuCau() về việc thôi đoán ý người dùng.
+  switchSub(trongNhuCau(w) ? "trans" : "word");
+
+  // Đoạn dài thì tra nguyên đoạn như một từ chắc chắn rỗng — bỏ lượt gọi mạng
+  // đó đi, nhưng nói rõ vì sao tab Từ vựng trống.
+  if (w.length > 40) {
+    lastEntries = [];
+    trangThai($("result"), "text-aa",
+      "Đoạn này dài quá để tra như một từ.", "Xem tab Dịch, hoặc gõ riêng từ cần tra.");
+    return;
+  }
   trangThai($("result"), "spinner-gap", "Đang tra “" + w + "”…");
   const entries = await lookup(w, $("dir").value);
   lastEntries = entries;
   await renderWord(entries);
 }
+/**
+ * Chỉ dùng để chọn tab mở sẵn, không dùng để quyết định tra cái gì.
+ *
+ * Bản cũ dùng chính phép thử này để chọn CHỈ tra từ hay CHỈ dịch, và đoán sai
+ * suốt: danh từ ghép dài vẫn là từ cần tra, câu ngắn cụt lủn vẫn là câu cần
+ * dịch. Nay cả ba tab đều có dữ liệu, đoán sai thì chỉ mất một cú chạm.
+ */
+function trongNhuCau(w) {
+  return w.length > 30 || /[。．！？\n]/.test(w);
+}
+
 $("go").addEventListener("click", () => runLookup($("q").value));
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") runLookup($("q").value); });
 $("dir").addEventListener("change", () => runLookup($("q").value));
@@ -665,35 +688,63 @@ async function renderWord(entries) {
   }
 }
 
-function renderKanji(chars) {
+/**
+ * Tab Hán tự: mỗi chữ là một thẻ đầy đủ và LƯU ĐƯỢC vào sổ tay như từ vựng.
+ *
+ * Một chữ Hán không phải chú thích của từ, nó là đơn vị học riêng — nhớ 電 thì
+ * đọc được 電気・電車・停電 mà chẳng cần tra lại chữ nào.
+ */
+async function renderKanji(chars) {
   const box = $("kanji");
-  if (!chars.length) { trangThai(box, "text-aa", "Từ này không có Hán tự."); return; }
+  if (!chars.length) { trangThai(box, "text-aa", "Đoạn này không có chữ Hán nào."); return; }
   box.className = "";
   box.innerHTML = "";
-  const DB = window.KANJI || {};
-  for (const ch of chars) {
-    const d = DB[ch];
+  const list = window.HanTu.LIET_KE(chars.join(""));
+  const nb = await getNB();
+
+  for (const k of list) {
     const row = el("div", "kentry");
-    row.appendChild(el("div", "kchar", ch));
-    const main = el("div");
-    main.style.minWidth = "0";
-    main.appendChild(el("div", "khv", d && d.hv ? d.hv : "—"));
-    if (d) {
-      const bits = [];
-      if (d.on) bits.push("On: " + d.on);
-      if (d.kun) bits.push("Kun: " + d.kun);
-      if (d.s) bits.push(d.s + " nét");
-      if (d.jlpt) bits.push("N" + d.jlpt);
-      if (d.rad) bits.push("Bộ: " + d.rad);
-      if (bits.length) main.appendChild(el("div", "kmeta", bits.join(" · ")));
-      if (d.m && d.m.length) {
-        const ul = document.createElement("ul");
-        ul.className = "kmean";
-        d.m.slice(0, 6).forEach((m) => ul.appendChild(el("li", null, m)));
-        main.appendChild(ul);
-      }
+    row.appendChild(el("div", "kchar", k.ch));
+
+    const body = el("div", "kbody");
+    const head = el("div", "khead");
+    const left = el("div");
+    left.appendChild(el("div", "khv", k.hv || "—"));
+    const meta = window.HanTu.META(k);
+    if (meta) left.appendChild(el("div", "kmeta", meta));
+    head.appendChild(left);
+
+    const key = window.HanTu.KHOA(k.ch);
+    head.appendChild(nutLuu(nb[key] && !nb[key].del, async () => {
+      const laMoi = await capNhat((so) => {
+        const cu = so[key];
+        const ne = window.HanTu.MUC(k);
+        // Lưu lại một chữ đã có -> giữ nguyên tiến độ học, ghi chú và nghĩa đã sửa.
+        if (cu && !cu.del) {
+          if (cu.deck) ne.deck = cu.deck;
+          if (cu.srs) ne.srs = cu.srs;
+          if (cu.fav) ne.fav = cu.fav;
+          if (cu.note) ne.note = cu.note;
+          if (cu.mEdit) { ne.mEdit = 1; ne.means = cu.means; ne.mOrig = cu.mOrig; }
+        }
+        so[key] = ne;
+        return !cu || cu.del;
+      });
+      if (laMoi) mung(await theoDoi.ghiLuu(1));
+      syncSoon(); refreshNotifications();
+    }));
+    body.appendChild(head);
+
+    const ngh = window.HanTu.MUC(k).means;
+    if (ngh.length) {
+      const ul = document.createElement("ul");
+      ul.className = "kmean";
+      ngh.slice(0, 6).forEach((m) => ul.appendChild(el("li", null, m)));
+      body.appendChild(ul);
+    } else {
+      body.appendChild(el("div", "kmeta", "Chưa có nghĩa cho chữ này — lưu lại rồi tự viết vào Sổ tay."));
     }
-    row.appendChild(main);
+    row.appendChild(body);
     box.appendChild(row);
   }
 }
@@ -867,9 +918,13 @@ $("editSheet").addEventListener("click", (e) => { if (e.target.id === "editSheet
 
 const ALL = "__all__", NONE = "__none__";
 const LIKE = "__like__", DISLIKE = "__dislike__";
+const HANTU = "__kanji__";
 let curDeck = ALL;
 
-function dirLabel(d) { return d === "vija" ? "Việt→Nhật" : "Nhật→Việt"; }
+function dirLabel(d) {
+  if (d === "kanji") return "Hán tự";
+  return d === "vija" ? "Việt→Nhật" : "Nhật→Việt";
+}
 function deckName(decks, id) { const d = decks[id]; return d && !d.del ? d.name : null; }
 
 async function setFav(key, val) {
@@ -991,7 +1046,8 @@ async function drawNotebook() {
 
   const items = Object.entries(nb).map(([key, v]) => ({ key, ...v })).sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const activeItems = items.filter((it) => !it.del);
-  if (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE && !deckName(decks, curDeck)) curDeck = ALL;
+  if (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE && curDeck !== HANTU
+      && !deckName(decks, curDeck)) curDeck = ALL;
 
   /* --- hàng chip sổ con --- */
   const bar = $("deckBar");
@@ -1001,6 +1057,7 @@ async function drawNotebook() {
     : id === NONE ? activeItems.filter((i) => !i.deck).length
     : id === LIKE ? activeItems.filter((i) => i.fav === 1).length
     : id === DISLIKE ? activeItems.filter((i) => i.fav === -1).length
+    : id === HANTU ? activeItems.filter((i) => i.dict === "kanji").length
     : activeItems.filter((i) => i.deck === id).length;
   const mk = (id, label, iconTen) => {
     const b = el("button", "chip" + (curDeck === id ? " active" : ""));
@@ -1015,6 +1072,8 @@ async function drawNotebook() {
   mk(NONE, "Chưa phân loại", "funnel");
   mk(LIKE, "Thích", "heart");
   mk(DISLIKE, "Không thích", "thumbs-down");
+  // Hán tự tách riêng vì học chữ và học từ là hai buổi khác nhau.
+  mk(HANTU, "Hán tự", "text-aa");
   activeDecks.forEach((d) => mk(d.id, d.name, "folder-simple"));
 
   const add = el("button", "chip add");
@@ -1031,7 +1090,7 @@ async function drawNotebook() {
   });
   bar.appendChild(add);
   $("deckActions").style.display =
-    (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE) ? "" : "none";
+    (curDeck !== ALL && curDeck !== NONE && curDeck !== LIKE && curDeck !== DISLIKE && curDeck !== HANTU) ? "" : "none";
 
   /* --- danh sách --- */
   const kw = $("filter").value.trim().toLowerCase();
@@ -1039,6 +1098,7 @@ async function drawNotebook() {
   if (curDeck === NONE) rows = rows.filter((i) => !i.deck);
   else if (curDeck === LIKE) rows = rows.filter((i) => i.fav === 1);
   else if (curDeck === DISLIKE) rows = rows.filter((i) => i.fav === -1);
+  else if (curDeck === HANTU) rows = rows.filter((i) => i.dict === "kanji");
   else if (curDeck !== ALL) rows = rows.filter((i) => i.deck === curDeck);
   if (kw) {
     rows = rows.filter((it) =>
@@ -1062,7 +1122,7 @@ async function drawNotebook() {
 
   const now = Date.now();
   for (const it of rows) {
-    const row = el("div", "entry" + (it.kind === "sent" ? " sent" : ""));
+    const row = el("div", "entry" + (it.kind === "sent" ? " sent" : "") + (it.dict === "kanji" ? " kanji" : ""));
     const body = el("div", "body");
 
     const head = el("div", "head");
@@ -1089,6 +1149,10 @@ async function drawNotebook() {
 
     const hvS = hanVietOf(it.word);
     if (hvS) body.appendChild(el("div", "hv", "Hán Việt: " + hvS));
+    if (it.dict === "kanji") {
+      const km = window.HanTu.META(it.kanji);
+      if (km) body.appendChild(el("div", "t-tiny faint", km));
+    }
     if (it.means && it.means.length) body.appendChild(el("div", "m", it.means.slice(0, 4).join("; ")));
     if (it.note && it.note.trim()) body.appendChild(khoiGhiChu(it.note.trim()));
 
@@ -1284,7 +1348,7 @@ function showCard(giuLat) {
   const daLat = giuLat && $("stGrade").style.display !== "none";
 
   $("stProg").textContent = "Còn " + session.queue.length + " mục · đã xong " + session.done;
-  $("stCard").className = "studycard" + (it.kind === "sent" ? " sent" : "");
+  $("stCard").className = "studycard" + (it.kind === "sent" ? " sent" : "") + (it.dict === "kanji" ? " kanji" : "");
   $("stWord").textContent = it.word;
   renderStudyFav(it);
 
@@ -1305,6 +1369,10 @@ function revealCard() {
   if (!it) return;
   const hvS = hanVietOf(it.word);
   $("stRead").textContent = (it.reading || "") + (hvS ? ((it.reading ? "　·　" : "") + "Hán Việt: " + hvS) : "");
+  if (it.dict === "kanji") {
+    const km = window.HanTu.META(it.kanji);
+    if (km) $("stMean").appendChild(el("div", "t-small faint", km));
+  }
   if (it.means && it.means.length) {
     const ul = document.createElement("ul");
     it.means.slice(0, 5).forEach((m) => ul.appendChild(el("li", null, m)));

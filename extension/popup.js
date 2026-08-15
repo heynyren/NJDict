@@ -244,62 +244,87 @@ function extractKanji(str) {
   return out;
 }
 
-function renderKanji(chars) {
+/**
+ * Tab Hán tự: mỗi chữ là một thẻ đầy đủ và LƯU ĐƯỢC vào sổ tay như từ vựng.
+ *
+ * Một chữ Hán không phải chú thích của từ, nó là đơn vị học riêng — nhớ 電 thì
+ * đọc được 電気・電車・停電 mà chẳng cần tra lại chữ nào. Nên nó xứng đáng có
+ * chỗ trong sổ tay và trong sóng học tập, chứ không chỉ là một dòng phụ.
+ */
+async function renderKanji(chars) {
   kanjiEl.innerHTML = "";
   if (!chars.length) {
-    trangThai(kanjiEl, "text-aa", "Từ này không có Hán tự.");
+    trangThai(kanjiEl, "text-aa", "Đoạn này không có chữ Hán nào.");
     return;
   }
   kanjiEl.className = "";
-  const DB = window.KANJI || {};
-  for (const ch of chars) {
-    const d = DB[ch];
+  const list = window.HanTu.LIET_KE(chars.join(""));
+  const nb = await getNotebook();
+
+  for (const k of list) {
     const row = document.createElement("div");
     row.className = "kentry";
 
     const cEl = document.createElement("div");
-    cEl.className = "kchar"; cEl.textContent = ch;
+    cEl.className = "kchar"; cEl.textContent = k.ch;
     row.appendChild(cEl);
 
-    const main = document.createElement("div");
-    main.style.minWidth = "0";
+    const body = document.createElement("div");
+    body.className = "kbody";
 
+    const head = document.createElement("div");
+    head.className = "khead";
+    const left = document.createElement("div");
     const hv = document.createElement("div");
     hv.className = "khv";
-    hv.textContent = d && d.hv ? d.hv : "—";
-    main.appendChild(hv);
-
-    if (d) {
-      const bits = [];
-      if (d.on) bits.push("On: " + d.on);
-      if (d.kun) bits.push("Kun: " + d.kun);
-      if (d.s) bits.push(d.s + " nét");
-      if (d.jlpt) bits.push("N" + d.jlpt);
-      if (d.rad) bits.push("Bộ: " + d.rad);
-      if (bits.length) {
-        const meta = document.createElement("div");
-        meta.className = "kmeta"; meta.textContent = bits.join(" · ");
-        main.appendChild(meta);
-      }
-      if (d.m && d.m.length) {
-        const ul = document.createElement("ul");
-        ul.className = "kmean";
-        d.m.slice(0, 6).forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
-        main.appendChild(ul);
-      }
-    } else {
-      const meta = document.createElement("div");
-      meta.className = "kmeta"; meta.textContent = "Không có dữ liệu Hán Việt cho chữ này.";
-      main.appendChild(meta);
+    hv.textContent = k.hv || "—";
+    left.appendChild(hv);
+    const meta = window.HanTu.META(k);
+    if (meta) {
+      const m = document.createElement("div");
+      m.className = "kmeta"; m.textContent = meta;
+      left.appendChild(m);
     }
-    row.appendChild(main);
+    head.appendChild(left);
+
+    const btn = document.createElement("button");
+    btn.className = "btn xs save"; btn.type = "button";
+    const danhDau = () => {
+      btn.classList.add("saved");
+      btn.innerHTML = window.Icon("check", { size: 15 }) + '<span class="lb">Đã lưu</span>';
+    };
+    const key = window.HanTu.KHOA(k.ch);
+    if (nb[key] && !nb[key].del) danhDau();
+    else {
+      btn.innerHTML = window.Icon("plus", { size: 15 }) + '<span class="lb">Lưu</span>';
+      btn.addEventListener("click", () => {
+        chrome.runtime.sendMessage(
+          { type: "SAVE_WORD", entry: window.HanTu.MUC(k), dict: window.HanTu.HUONG },
+          () => { danhDau(); try { chrome.runtime.sendMessage({ type: "SYNC_SOON" }); } catch (e) {} }
+        );
+      });
+    }
+    head.appendChild(btn);
+    body.appendChild(head);
+
+    const ngh = window.HanTu.MUC(k).means;
+    if (ngh.length) {
+      const ul = document.createElement("ul");
+      ul.className = "kmean";
+      ngh.slice(0, 6).forEach((m) => { const li = document.createElement("li"); li.textContent = m; ul.appendChild(li); });
+      body.appendChild(ul);
+    } else {
+      const m = document.createElement("div");
+      m.className = "kmeta"; m.textContent = "Chưa có nghĩa cho chữ này — lưu lại rồi tự viết vào Sổ tay.";
+      body.appendChild(m);
+    }
+    row.appendChild(body);
     kanjiEl.appendChild(row);
   }
 }
 
 // ---- Chuyển tab ----
 function switchTab(name) {
-  if (name === "kanji" && tabKanjiEl.disabled) name = "word";
   tabWordEl.classList.toggle("active", name === "word");
   tabKanjiEl.classList.toggle("active", name === "kanji");
   tabTransEl.classList.toggle("active", name === "trans");
@@ -352,26 +377,49 @@ function doTranslate(raw) {
 }
 
 
+/**
+ * Bôi đen phát nào cũng chạy CẢ BA: tra từ, đọc Hán tự, dịch cả câu.
+ *
+ * Bản cũ tự đoán ý bằng độ dài và dấu câu, và đoán sai suốt: danh từ ghép dài
+ * vẫn là từ cần tra, câu ngắn cụt lủn vẫn là câu cần dịch. Nay chỉ còn đoán mỗi
+ * việc *mở sẵn tab nào* — đoán sai chỗ đó thì chỉ mất một cú bấm.
+ */
 async function run(word) {
   const w = (word || "").trim();
   const dict = dirEl.value;
-
-  // Tab Hán tự
   lastTranslated = "";
-  if (w.length > 30 || /[。．！？\n]/.test(w)) { switchTab("trans"); return; }   // là câu -> dịch thẳng
+
+  // Hán tự luôn có mặt, kể cả khi đang xem tab Dịch.
   const chars = extractKanji(w);
-  tabKanjiEl.querySelector(".lb").textContent = "Hán tự" + (chars.length ? " " + chars.length : "");
-  tabKanjiEl.disabled = chars.length === 0;
   renderKanji(chars);
-  if (!chars.length) switchTab("word");
+  // Cố ý KHÔNG khoá tab này khi đoạn không có chữ Hán: tab luôn ở đó, mở ra thì
+  // nó tự nói "đoạn này không có chữ Hán nào". Tab lúc có lúc mất khó dùng hơn
+  // nhiều so với một tab thỉnh thoảng trống.
+  tabKanjiEl.querySelector(".lb").textContent = "Hán tự" + (chars.length ? " " + chars.length : "");
 
   if (!w) {
     trangThai(resEl, "magnifying-glass", "Bôi đen một từ rồi mở lại, hoặc gõ vào ô trên.");
+    switchTab("word");
+    return;
+  }
+
+  // Mở sẵn tab hợp lý nhất, nhưng cả ba tab đều có dữ liệu.
+  switchTab(trongNhuCau(w) ? "trans" : "word");
+
+  // Đoạn dài thì tra nguyên đoạn như một từ chắc chắn rỗng — bỏ qua lượt gọi
+  // mạng đó, nhưng vẫn nói rõ vì sao tab Từ vựng trống.
+  if (w.length > 40) {
+    trangThai(resEl, "text-aa", "Đoạn này dài quá để tra như một từ — xem tab Dịch, hoặc gõ riêng từ cần tra.");
     return;
   }
   trangThai(resEl, "spinner-gap", "Đang tra “" + w + "”…");
   const entries = await lookup(w, dict);
   renderWord(entries);
+}
+
+/** Chỉ dùng để chọn tab mở sẵn, không dùng để quyết định tra cái gì. */
+function trongNhuCau(w) {
+  return w.length > 30 || /[。．！？\n]/.test(w);
 }
 
 // ---- Sự kiện ----

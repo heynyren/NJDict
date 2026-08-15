@@ -1,6 +1,6 @@
 {
   "name": "njdict-app",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "NJDict — tra từ tiếng Nhật, sổ tay và học SRS trên Android",
   "private": true,
   "scripts": {

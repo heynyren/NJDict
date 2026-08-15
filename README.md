@@ -35,6 +35,10 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
   phải mở Sổ tay tìm lại. Sửa được cả nghĩa Mazii trả về, nghĩa Hán tự lẫn bản dịch
   câu; sửa là lưu luôn, và ô ghi chú nằm ngay cạnh. Bản Android mở thẳng bảng sửa
   quen thuộc từ thẻ kết quả.
+- **Xoá rồi vẫn giữ bản dịch của bạn** — xoá một mục vì đã thuộc thì nó biến khỏi sổ
+  tay và khỏi sóng ôn tập thật, nhưng nghĩa bạn đã hiệu đính và ghi chú thì ở lại.
+  Vài tháng sau quên mà tra lại, popup hiện đúng bản bạn từng chốt chứ không gọi máy
+  dịch lại từ đầu. Xem `extension/muc.js`.
 
 ## Quy trình phát triển / nâng cấp
 

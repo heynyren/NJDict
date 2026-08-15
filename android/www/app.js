@@ -691,7 +691,7 @@ async function renderWord(entries) {
     head.style.alignItems = "flex-start";
 
     const key = $("dir").value + ":" + en.word;
-    const daCo = (nb[key] && !nb[key].del) ? nb[key] : null;
+    const daCo = window.Muc.banCuaBan(nb[key]);
     // Đã sửa lần trước thì hiện thẳng bản của bạn, không hiện lại bản máy rồi
     // bắt bạn tự nhớ là mình đã hiệu đính.
     const nghia = ((daCo && daCo.mEdit) ? (daCo.means || []) : (en.means || []))
@@ -727,13 +727,15 @@ async function renderWord(entries) {
           if (old2.src && !ne2.src) ne2.src = old2.src;
           if (old2.mEdit) { ne2.mEdit = 1; ne2.means = old2.means; ne2.mOrig = old2.mOrig; }
         }
+        // Lưu lại một mục đã xoá: nhặt lại đúng phần bạn tự viết. Xem muc.js.
+        window.Muc.nhatLaiBanSua(ne2, old2);
         nb[key] = ne2;
         return !old2 || old2.del;
       });
       if (laMoi) mung(await theoDoi.ghiLuu(1));
       syncSoon(); refreshNotifications();
     };
-    head.appendChild(hangHanhDong(!!daCo, luuTu, key, () => renderWord(entries)));
+    head.appendChild(hangHanhDong(!!(daCo && daCo.saved), luuTu, key, () => renderWord(entries)));
 
     div.appendChild(head);
     if (nghia.length) {
@@ -767,7 +769,7 @@ async function renderKanji(chars) {
     const body = el("div", "kbody");
     const head = el("div", "khead");
     const key = window.HanTu.KHOA(k.ch);
-    const daCo = (nb[key] && !nb[key].del) ? nb[key] : null;
+    const daCo = window.Muc.banCuaBan(nb[key]);
 
     const left = el("div");
     const hv = el("span", "khv", k.hv || "—");
@@ -789,13 +791,15 @@ async function renderKanji(chars) {
           if (cu.note) ne.note = cu.note;
           if (cu.mEdit) { ne.mEdit = 1; ne.means = cu.means; ne.mOrig = cu.mOrig; }
         }
+        // Lưu lại một mục đã xoá: nhặt lại đúng phần bạn tự viết. Xem muc.js.
+        window.Muc.nhatLaiBanSua(ne, cu);
         so[key] = ne;
         return !cu || cu.del;
       });
       if (laMoi) mung(await theoDoi.ghiLuu(1));
       syncSoon(); refreshNotifications();
     };
-    head.appendChild(hangHanhDong(!!daCo, luuChu, key, () => renderKanji(chars)));
+    head.appendChild(hangHanhDong(!!(daCo && daCo.saved), luuChu, key, () => renderKanji(chars)));
     body.appendChild(head);
 
     const ngh = ((daCo && daCo.mEdit) ? (daCo.means || []) : window.HanTu.MUC(k).means)
@@ -856,7 +860,7 @@ async function showTranslate(text) {
 
     const key = "javi:" + text;
     const nb0 = await getNB();
-    const daCo = (nb0[key] && !nb0[key].del) ? nb0[key] : null;
+    const daCo = window.Muc.banCuaBan(nb0[key]);
     const banDich = ((daCo && daCo.mEdit) ? (daCo.means || []) : [out]).map(meanToStr);
 
     const hd = el("div", "rowx between");
@@ -879,6 +883,8 @@ async function showTranslate(text) {
           if (oldS.src && !neS.src) neS.src = oldS.src;
           if (oldS.mEdit) { neS.mEdit = 1; neS.means = oldS.means; neS.mOrig = oldS.mOrig; }
         }
+        // Lưu lại một mục đã xoá: nhặt lại đúng phần bạn tự viết. Xem muc.js.
+        window.Muc.nhatLaiBanSua(neS, oldS);
         nb[key] = neS;
         return !oldS || oldS.del;
       });
@@ -886,7 +892,7 @@ async function showTranslate(text) {
       syncSoon(); refreshNotifications();
       toast("Đã lưu — bấm Sửa nếu bản dịch chưa đúng chuyên ngành");
     };
-    hd.appendChild(hangHanhDong(!!daCo, luuCau, key, () => showTranslate(text)));
+    hd.appendChild(hangHanhDong(!!(daCo && daCo.saved), luuCau, key, () => showTranslate(text)));
     box.appendChild(hd);
 
     if (daCo && daCo.note) box.appendChild(khoiGhiChu(daCo.note));
@@ -1296,7 +1302,7 @@ async function drawNotebook() {
     del.addEventListener("click", async () => {
       if (!confirm("Xoá “" + it.word.slice(0, 40) + "”?")) return;
       await capNhat((nb) => {
-        nb[it.key] = { word: it.word, dict: it.dict, del: true, ts: Date.now() };
+        nb[it.key] = window.Muc.biaMo(it);
       });
       drawNotebook(); syncSoon(); refreshNotifications();
       toast("Đã xoá khỏi sổ tay");
@@ -1497,7 +1503,7 @@ async function deleteCurrentCard() {
   await capNhat((nb) => {
     const original = nb[it.key];
     lastDeleted = original ? { key: it.key, entry: Object.assign({}, original) } : null;
-    nb[it.key] = { word: it.word, dict: it.dict, del: true, ts: Date.now() };
+    nb[it.key] = window.Muc.biaMo(it);
   });
   // Bỏ hết bản sao của mục này khỏi hàng đợi (khi "Quên" nó bị xếp lại cuối hàng).
   session.queue = session.queue.filter((x) => x.key !== it.key);

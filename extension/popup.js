@@ -335,14 +335,13 @@ async function renderWord(entries) {
     resEl.appendChild(box);
     // Nghĩa Mazii trả về cũng sửa được; đã sửa lần trước thì hiện thẳng bản của
     // bạn chứ không hiện lại bản máy rồi bắt bạn tự nhớ là mình đã hiệu đính.
-    const cu = nb[dict + ":" + en.word];
-    const daCo = (cu && !cu.del) ? cu : null;
+    const daCo = window.Muc.banCuaBan(nb[dict + ":" + en.word]);
     const goc = (en.means || []).slice(0, 8);
     theSuaDuoc(box, {
       dl: {
         means: (daCo && daCo.mEdit ? (daCo.means || []) : goc).slice(0, 6),
         note: (daCo && daCo.note) || "",
-        saved: !!daCo,
+        saved: !!(daCo && daCo.saved),
         mEdit: daCo && daCo.mEdit ? 1 : 0
       },
       dau: (el) => {
@@ -417,13 +416,12 @@ async function renderKanji(chars) {
 
     const muc = window.HanTu.MUC(k);
     const goc = (muc.means || []).slice(0, 8);
-    const cu = nb[window.HanTu.KHOA(k.ch)];
-    const daCo = (cu && !cu.del) ? cu : null;
+    const daCo = window.Muc.banCuaBan(nb[window.HanTu.KHOA(k.ch)]);
     theSuaDuoc(body, {
       dl: {
         means: (daCo && daCo.mEdit ? (daCo.means || []) : goc).slice(0, 6),
         note: (daCo && daCo.note) || "",
-        saved: !!daCo,
+        saved: !!(daCo && daCo.saved),
         mEdit: daCo && daCo.mEdit ? 1 : 0
       },
       dau: (el) => {
@@ -488,7 +486,7 @@ function doTranslate(raw) {
       dl: {
         means: (daCo && daCo.mEdit ? (daCo.means || goc) : goc),
         note: (daCo && daCo.note) || "",
-        saved: !!daCo,
+        saved: !!(daCo && daCo.saved),
         mEdit: daCo && daCo.mEdit ? 1 : 0
       },
       // Bản dịch chính LÀ phần sửa được, nên phần đầu thẻ để trống — lúc đang

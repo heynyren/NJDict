@@ -642,6 +642,9 @@
   /* Bảng lời thoại                                                      */
   /* ================================================================== */
 
+  /** Logo của extension, nhúng sẵn để khỏi phải mở web_accessible_resources. */
+  const LOGO = "data:image/png;base64,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";
+
   const CSS = `
     :host { all: initial; }
     * { box-sizing: border-box; }
@@ -668,7 +671,9 @@
     svg { display: inline-block; vertical-align: -.18em; flex: none; fill: currentColor; }
     button { font-family: inherit; cursor: pointer; }
     .top { display: flex; align-items: center; gap: 8px; padding: 11px 13px; }
-    .top .nm { font-size: 13.5px; font-weight: 750; letter-spacing: -.01em; flex: 1; min-width: 0; }
+    .top .lg { flex:0 0 auto; border-radius:4px; display:block }
+    .top .nm { font-size: 13.5px; font-weight: 750; letter-spacing: -.01em; flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .top .n { color: var(--ink-3); font-size: 12px; font-weight: 600; }
     .chip {
       display: inline-flex; align-items: center; gap: 4px; flex: none;
@@ -795,8 +800,19 @@
 
     /* --- thanh tiêu đề --- */
     const top = document.createElement("div"); top.className = "top";
-    top.appendChild(ic("subtitles", 17));
-    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = "Lời thoại";
+    // Logo của chính extension này, không phải một icon "phụ đề" chung chung:
+    // cài cả mấy app cùng lúc thì trên một video có mấy bảng giống hệt nhau
+    // xếp chồng, nhìn vào không biết cái nào của ai. Lấy đúng hình đang nằm
+    // trên thanh công cụ Chrome thì khỏi phải đoán.
+    //
+    // Nhúng thẳng dạng base64 chứ không dùng chrome.runtime.getURL: đường ấy
+    // đòi khai báo web_accessible_resources, tức là mở cho MỌI trang web đọc
+    // được tệp trong extension, chỉ để lấy một cái hình 48px.
+    const lg = document.createElement("img"); lg.className = "lg";
+    lg.src = LOGO; lg.alt = ""; lg.width = 18; lg.height = 18;
+    top.appendChild(lg);
+    const nm = document.createElement("span"); nm.className = "nm";
+    nm.textContent = "NJDict · Lời thoại";
     top.appendChild(nm);
     const demCau = document.createElement("span"); demCau.className = "n";
     top.appendChild(demCau);

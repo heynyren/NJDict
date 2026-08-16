@@ -145,7 +145,10 @@
         out.push({
           t: t0 + lech,
           d: Math.max(0.05, lechSau - lech),
-          s: String(x.utf8).replace(/\s+/g, " ")
+          s: String(x.utf8).replace(/\s+/g, " "),
+          // Mẩu cuối của một sự kiện = chỗ YouTube xuống dòng. Không đáng tin để
+          // làm ranh giới câu, nhưng cat-cau.js vẫn nhận nó làm gợi ý yếu.
+          ev: i === segs.length - 1
         });
       });
     });
@@ -493,55 +496,9 @@
   /* Ghép cue thành câu                                                  */
   /* ================================================================== */
 
-  const CJK = /[　-ヿ㐀-䶿一-鿿＀-￯]/;
-  const HET_CAU = /[。．！？!?…]$|[.!?]["'’”)]?$/;
-
-  /** Nối hai mẩu: tiếng Nhật thì dính liền, tiếng có khoảng trắng thì thêm dấu cách. */
-  function noiChu(a, b) {
-    if (!a) return b;
-    if (!b) return a;
-    if (/\s$/.test(a) || /^\s/.test(b)) return a + b;   // mẩu đã tự mang dấu cách
-    const dinh = CJK.test(a[a.length - 1]) && CJK.test(b[0]);
-    return a + (dinh ? "" : " ") + b;
-  }
-
-  /**
-   * Gộp các cue rời thành câu đọc được.
-   *
-   * Ngắt khi gặp một trong ba điều: hết câu bằng dấu câu, có khoảng lặng đáng kể
-   * trước cue sau, hoặc đã quá dài (phòng người nói một mạch không nghỉ). Không
-   * làm bước này thì mọi thứ phía sau đều hỏng theo: bản dịch vụn, mục lưu vào
-   * sổ tay cụt đầu cụt đuôi, tra từ thì trúng nửa từ bị cắt đôi giữa hai cue.
-   */
-  function ghepCau(cues, opt) {
-    const LANG = (opt && opt.nghi) || 0.9;      // khoảng lặng đủ để coi là hết câu
-    const DAI = (opt && opt.dai) || 140;        // trần độ dài một câu
-    const out = [];
-    let cur = null;
-    for (let i = 0; i < cues.length; i++) {
-      const c = cues[i];
-      if (!cur) {
-        cur = { t: c.t, tEnd: c.t + c.d, s: c.s, manh: [{ t: c.t, d: c.d, a: 0, b: c.s.length }] };
-      } else {
-        // Ghi lại mẩu này nằm ở đâu trong chuỗi đã ghép, để lúc phát còn tô
-        // sáng đúng phần đang được nói. noiChu chỉ nối thêm vào đuôi, nên vị trí
-        // bắt đầu chính là độ dài mới trừ đi độ dài mẩu.
-        const moi = noiChu(cur.s, c.s);
-        cur.manh.push({ t: c.t, d: c.d, a: moi.length - c.s.length, b: moi.length });
-        cur.s = moi;
-        cur.tEnd = c.t + c.d;
-      }
-
-      const sau = cues[i + 1];
-      const khoangLang = sau ? sau.t - (c.t + c.d) : Infinity;
-      if (HET_CAU.test(cur.s) || khoangLang >= LANG || cur.s.length >= DAI || !sau) {
-        out.push(cur);
-        cur = null;
-      }
-    }
-    if (cur) out.push(cur);
-    return out;
-  }
+  // Thuật toán nằm ở cat-cau.js — nó dài và có luật riêng của tiếng Nhật, để
+  // lẫn vào đây thì vừa khó đọc vừa khó thử. Xem đầu tệp đó để biết cách cắt.
+  const ghepCau = (cues, opt) => self.CatCau.ghepCau(cues, opt);
 
   /* ================================================================== */
   /* Trạng thái                                                          */

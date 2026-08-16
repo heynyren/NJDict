@@ -185,9 +185,12 @@
 
     const cs = await capBangYouTube();
     if (cs.length) return { cue: cs, cach: "bang" };
-    if (khungBang()) {
+    const kh = khungBang();
+    if (kh.length) {
       throw new Error("Thấy bảng bản chép lời của YouTube nhưng không đọc được dòng nào — "
-        + "có vẻ họ vừa đổi cách dựng bảng. Bấm Thử lại; còn không thì báo lại để sửa.");
+        + "có vẻ họ vừa đổi cách dựng bảng. Bấm Thử lại; còn không thì báo lại để sửa. "
+        + "(khung: " + kh.length + " · thẻ quen: "
+        + document.querySelectorAll("ytd-transcript-segment-renderer").length + ")");
     }
     throw new Error("YouTube không cho tải phụ đề, mà cũng chưa mở được bảng bản chép lời của họ. "
       + "Bấm “…” dưới video → “Hiện bản chép lời” — hiện ra là chỗ này tự lấy, không cần bấm gì thêm.");
@@ -205,10 +208,25 @@
   }
 
   /** Bảng bản chép lời của YouTube, nếu đang có trên trang. */
+  /**
+   * MỌI khung có thể là bảng bản chép lời, chứ không chỉ khung đầu tiên.
+   *
+   * Hai chỗ từng làm hỏng và giờ đều được tính tới:
+   *  · YouTube đổi target-id của bảng (bản cập nhật giao diện 02/2026), nên dò
+   *    đúng một chuỗi cũ là trượt — dò theo "có chứa chữ transcript" thì không.
+   *  · Trên trang luôn có SẴN vài khung engagement panel rỗng nằm chờ. Lấy đúng
+   *    khung đầu tiên tìm được thì rất dễ vớ phải một khung rỗng, rồi kết luận
+   *    "thấy bảng mà không đọc được dòng nào" trong khi bảng thật đầy chữ ngay
+   *    bên cạnh.
+   */
   function khungBang() {
-    return document.querySelector('[target-id="engagement-panel-searchable-transcript"]')
-      || document.querySelector("ytd-transcript-renderer")
-      || document.querySelector("ytd-transcript-segment-list-renderer");
+    const ra = [];
+    const them = (n) => { if (n && ra.indexOf(n) < 0) ra.push(n); };
+    document.querySelectorAll('[target-id*="transcript" i]').forEach(them);
+    document.querySelectorAll(
+      "ytd-transcript-renderer, ytd-transcript-segment-list-renderer, ytd-transcript-search-panel-renderer"
+    ).forEach(them);
+    return ra;
   }
 
   /** Quét cả trong shadow root mở — dùng trong phạm vi hẹp thôi, vì tốn. */
@@ -231,29 +249,87 @@
    *   3. bí quá thì bất cứ dòng nào trong bảng mà chữ MỞ ĐẦU bằng một mốc giờ —
    *      cái đó thì YouTube có đổi kiểu gì cũng còn, vì người đọc cần nhìn thấy.
    */
-  function doanBang() {
+  /**
+   * Con theo cây ĐÃ DÀN PHẲNG.
+   *
+   * Phải dùng cái này chứ không phải el.children: một khối dựng nội dung trong
+   * shadow root thì nhìn từ ngoài là "không có con nào", nên nó tự nhận mình là
+   * dòng trong cùng — và thế là cả khối chứa ba dòng lại bị đếm thành một dòng
+   * thứ tư, dính cả ba câu vào nhau.
+   */
+  function conDaDan(el) {
+    if (el.shadowRoot) return [...el.shadowRoot.children];
+    return [...(el.children || [])];
+  }
+
+  /** Dòng trong cùng trông giống một dòng bản chép lời. */
+  function laDongTrongCung(el) {
+    if (!laDong(el)) return false;
+    // Phải xét con bằng laDong chứ không phải "có mốc giờ": ô chứa RIÊNG mốc giờ
+    // ("0:00") cũng có mốc giờ, và nếu tính nó là con hợp lệ thì chính dòng cha
+    // bị loại — rốt cuộc không nhặt được dòng nào.
+    for (const c of conDaDan(el)) if (laDong(c)) return false;
+    return true;
+  }
+
+  /**
+   * @param {boolean} [sau] quét sâu cả trang khi mọi cách trên đều trượt. Chỉ
+   *   bật ở lượt nạp, KHÔNG bật trong vòng canh DOM — quét cả trang YouTube mỗi
+   *   250ms thì chính mình làm trang giật.
+   */
+  function doanBang(sau) {
     const a = document.querySelectorAll("ytd-transcript-segment-renderer");
     if (a.length) return [...a];
+
     const khung = khungBang();
-    if (!khung) return [];
-    const b = quetSau(khung, (el) => /transcript-segment/i.test(el.tagName || ""));
-    if (b.length) return b;
-    return quetSau(khung, (el) => {
-      if (!laDong(el)) return false;
-      // Chỉ lấy dòng trong cùng, không lấy cả khối bọc ngoài. Phải xét bằng
-      // laDong chứ không phải "có mốc giờ": ô chứa riêng mốc giờ ("0:00") cũng
-      // có mốc giờ, và nếu tính nó là con hợp lệ thì chính dòng cha bị loại —
-      // rốt cuộc không nhặt được dòng nào.
-      for (const c of el.children) if (laDong(c)) return false;
-      return true;
-    });
+    // Khung nào cũng thử, và lấy khung ĐẦU TIÊN CÓ CHỮ — không phải khung đầu tiên.
+    for (const k of khung) {
+      const b = quetSau(k, (el) => /transcript-segment/i.test(el.tagName || ""));
+      if (b.length) return b;
+    }
+    for (const k of khung) {
+      // Đòi ít nhất 3 dòng: một dòng lẻ trông giống mốc giờ thì trang nào chẳng
+      // có (thời lượng video, mốc chương…), ba dòng liền thì mới là bản chép lời.
+      const c = quetSau(k, laDongTrongCung);
+      if (c.length >= 3) return c;
+    }
+    if (!sau) return [];
+
+    // Đường cùng: quét cả trang, kể cả trong shadow root. Tốn, nhưng chỉ chạy
+    // một lượt khi mọi cách khác đã trượt. Nhớ bỏ qua CHÍNH BẢNG NÀY — dòng của
+    // nó cũng là "mốc giờ rồi tới chữ", ăn lại đầu ra của mình thì thành vòng.
+    const d = quetSau(document.body, (el) =>
+      laDongTrongCung(el) && !(el.closest && el.closest("[data-njdict-yt]")));
+    return d.length >= 3 ? d : [];
   }
 
   const MOC_GIO = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*([\s\S]+)$/;
 
+  /**
+   * Chữ của một phần tử, tính cả phần nằm trong shadow root mở.
+   *
+   * textContent thường không thấy gì nếu thành phần đó dựng nội dung bên trong
+   * shadow root — mà từ ngoài nhìn vào thì chữ vẫn hiện đầy trên màn hình. Đi
+   * theo cây ĐÃ DÀN PHẲNG (gặp <slot> thì lấy phần được gán vào) để không đếm
+   * trùng chữ hai lần.
+   */
+  function chuSau(el) {
+    let s = "";
+    const di = (n) => {
+      if (!n) return;
+      if (n.nodeType === 3) { s += n.nodeValue; return; }
+      if (n.nodeType !== 1 && n.nodeType !== 11) return;
+      if (n.tagName === "SLOT" && n.assignedNodes) { n.assignedNodes({ flatten: true }).forEach(di); return; }
+      if (n.shadowRoot) { di(n.shadowRoot); return; }
+      n.childNodes.forEach(di);
+    };
+    di(el);
+    return s.replace(/\s+/g, " ").trim();
+  }
+
   /** Trông có giống một dòng bản chép lời không: mốc giờ, RỒI tới chữ. */
   function laDong(el) {
-    const m = String((el && el.textContent) || "").replace(/\s+/g, " ").trim().match(MOC_GIO);
+    const m = chuSau(el).match(MOC_GIO);
     return !!(m && m[2] && m[2].trim());
   }
 
@@ -266,12 +342,12 @@
    * thẳng chữ của cả dòng và tách mốc giờ ở đầu.
    */
   function docDoan(el) {
-    const ts = el.querySelector && el.querySelector(".segment-timestamp");
-    const tx = el.querySelector && el.querySelector(".segment-text");
-    const gon = (x) => String(x || "").replace(/\s+/g, " ").trim();
-    if (ts && tx && gon(tx.textContent)) return { t: giayTu(ts.textContent), s: gon(tx.textContent) };
-    const m = gon(el.textContent).match(MOC_GIO);
-    if (m) return { t: giayTu(m[1]), s: gon(m[2]) };
+    const tim = (sel) => (el.querySelector && el.querySelector(sel))
+      || (el.shadowRoot && el.shadowRoot.querySelector(sel)) || null;
+    const ts = tim(".segment-timestamp"), tx = tim(".segment-text");
+    if (ts && tx && chuSau(tx)) return { t: giayTu(chuSau(ts)), s: chuSau(tx) };
+    const m = chuSau(el).match(MOC_GIO);
+    if (m) return { t: giayTu(m[1]), s: m[2].trim() };
     return null;
   }
 
@@ -329,7 +405,7 @@
     }
 
     const ds = [];
-    doanBang().forEach((el) => {
+    doanBang(true).forEach((el) => {
       const d = docDoan(el);
       if (d && d.s) ds.push({ t: d.t, d: 0, s: d.s });
     });

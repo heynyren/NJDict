@@ -500,6 +500,17 @@
   // lẫn vào đây thì vừa khó đọc vừa khó thử. Xem đầu tệp đó để biết cách cắt.
   const ghepCau = (cues, opt) => self.CatCau.ghepCau(cues, opt);
 
+  /**
+   * Mã ngôn ngữ của bản chép lời, đoán từ chính chữ chứ không tin mã mà YouTube
+   * khai. Dùng làm ngôn ngữ NGUỒN khi dịch: kênh tiếng Anh mở trong NJDict thì
+   * cũng phải dịch đúng từ tiếng Anh, chứ ép "ja" là ra một mớ vô nghĩa.
+   */
+  function nguNguon() {
+    const c = S.cau && S.cau[0];
+    if (!c) return "ja";
+    return self.CatCau.doanNgu(S.cau.slice(0, 20).map((x) => x.s).join(" ")).ma;
+  }
+
   /* ================================================================== */
   /* Trạng thái                                                          */
   /* ================================================================== */
@@ -1185,6 +1196,9 @@
     S.oList.querySelectorAll(".ln").forEach((ln) => quanSat.observe(ln));
   }
 
+  /** Đếm số lượt dịch trượt của từng câu, để biết lúc nào thì thôi thử lại. */
+  const soLanTruot = new Map();
+
   /** Gom vài nhịp rồi mới gửi: cuộn nhanh sẽ bắn ra hàng chục lượt liền nhau. */
   function henGui() {
     clearTimeout(henDich);
@@ -1202,18 +1216,33 @@
     if (!ids.length) return;
     ids.forEach((i) => S.dich.set(i, ""));      // giữ chỗ, khỏi gửi trùng
     const texts = ids.map((i) => S.cau[i].s.trim());
-    chrome.runtime.sendMessage({ type: "TRANSLATE_MANY", texts: texts, from: "ja", to: "vi" }, (res) => {
+    chrome.runtime.sendMessage({ type: "TRANSLATE_MANY", texts: texts, from: nguNguon(), to: "vi" }, (res) => {
       const ra = (!chrome.runtime.lastError && res && res.ok) ? (res.texts || []) : [];
+      let truot = 0;
       ids.forEach((i, k) => {
-        const t = ra[k] || "—";
-        S.dich.set(i, t);
+        const t = ra[k] || "";
+        if (!t) {
+          // Lượt gọi trượt. TUYỆT ĐỐI không ghi "—" rồi coi như xong: ghi vào
+          // S.dich là câu đó bị đóng dấu vĩnh viễn, chẳng bao giờ hỏi lại nữa,
+          // và bạn nhìn thấy một câu không có nghĩa nằm giữa hai câu có nghĩa.
+          // Nhả nó ra, xếp lại hàng chờ, thử lại loạt sau.
+          S.dich.delete(i);
+          const lan = (soLanTruot.get(i) || 0) + 1;
+          soLanTruot.set(i, lan);
+          if (lan <= 3) { hangCho.add(i); truot++; return; }
+          S.dich.set(i, "—");               // thử mãi không được thì đành chịu
+        } else {
+          S.dich.set(i, t);
+          soLanTruot.delete(i);
+        }
         const ln = S.oList && S.oList.querySelector('.ln[data-i="' + i + '"]');
         const vi = ln && ln.querySelector(".vi");
-        if (vi) vi.textContent = t;
+        if (vi) vi.textContent = S.dich.get(i);
         // Đang rê chuột đúng dòng này mà bản dịch vừa về -> thay chữ "Đang dịch…"
         if (S.veTip && S.dongDangRe && S.dongDangRe() === i) S.veTip(i);
       });
-      if (hangCho.size) henGui();          // còn hàng chờ thì đi tiếp loạt sau
+      // Trượt thì lùi lại một nhịp cho bên kia thở, đừng nã lại ngay lập tức.
+      if (hangCho.size) truot ? setTimeout(henGui, 1200) : henGui();
     });
   }
 
@@ -1242,7 +1271,7 @@
     // Lưu kèm luôn bản dịch: một câu trần trụi nằm trong sổ tay thì đến lúc ôn
     // lại chẳng có gì để lật ra cả.
     if (S.dich.get(i)) { gui(S.dich.get(i)); return; }
-    chrome.runtime.sendMessage({ type: "TRANSLATE", text: c.s, from: "ja", to: "vi" }, (res) => {
+    chrome.runtime.sendMessage({ type: "TRANSLATE", text: c.s, from: nguNguon(), to: "vi" }, (res) => {
       gui((!chrome.runtime.lastError && res && res.ok) ? res.text : "");
     });
   }

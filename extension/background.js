@@ -458,18 +458,27 @@ async function handleTranslateMany(rawTexts, from, to) {
 
   // Song song có giới hạn: mở hết cùng lúc thì trình duyệt cũng xếp hàng ở tầng
   // kết nối, mà lỡ hỏng thì hỏng cả loạt.
+  //
+  // Và phải THỬ LẠI: gửi một loạt 40 câu thì bên kia hay chặn bớt vài câu giữa
+  // chừng. Bỏ luôn câu hỏng thì trên bảng nó nằm mãi ở dấu "—" trong khi hàng
+  // xóm hai bên đều có nghĩa — trông như mình bỏ sót, mà thật ra chỉ là một
+  // lượt gọi trượt.
   const SONG = 6;
   let ke = 0;
   await Promise.all(new Array(Math.min(SONG, can.length)).fill(0).map(async () => {
     while (ke < can.length) {
       const i = can[ke++];
-      try {
-        const g = await gtxTranslate(texts[i], f, t);
-        if (g && g.text) {
-          out[i] = g.text;
-          c[f + ">" + t + ":" + texts[i]] = { v: g.text, rd: g.reading || "", ts: now };
-        }
-      } catch (e) { /* câu nào hỏng thì bỏ câu đó, đừng kéo cả loạt xuống */ }
+      for (let lan = 0; lan < 3; lan++) {
+        try {
+          const g = await gtxTranslate(texts[i], f, t);
+          if (g && g.text) {
+            out[i] = g.text;
+            c[f + ">" + t + ":" + texts[i]] = { v: g.text, rd: g.reading || "", ts: now };
+            break;
+          }
+        } catch (e) { /* thử lại, đừng kéo cả loạt xuống theo */ }
+        if (lan < 2) await new Promise((r) => setTimeout(r, 250 * Math.pow(3, lan)));
+      }
     }
   }));
 

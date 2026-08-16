@@ -247,7 +247,12 @@
   const D_KET_MANH  = 1.6;
   const D_KET_YEU   = 0.5;
   const D_TREO      = -3.0;   // chặn mạnh
-  const D_HAT_TREO  = -2.5;
+  // Chặn TUYỆT ĐỐI, không phải chặn mạnh. Người ta hay kéo dài rồi mới thốt
+  // nốt tiểu từ cuối câu ("〜じゃないです ……… か"), lúc ấy khoảng lặng dài thượt
+  // đứng ngay trước một chữ không đời nào mở đầu được một câu. Để mức chặn vừa
+  // phải thì khoảng lặng thắng, và ra một câu chỉ có mỗi chữ 「か」.
+  // Riêng dấu câu CÓ SẴN trong bản gốc vẫn thắng, vì nó thoát ra sớm hơn.
+  const D_HAT_TREO  = -20;
   const D_MO_DAU    = 1.2;
   const D_HET_SK    = 0.35;   // hết một sự kiện phụ đề: gợi ý yếu thôi
   const H_NGHI      = 1.10;   // hệ số cho khoảng lặng đã chuẩn hoá
@@ -376,6 +381,11 @@
     return !!mauSau && LA_MO.test(mauSau) && lang >= nhip * 0.6;
   }
 
+  /** Mảnh vụn không đứng riêng thành câu được: rặt trợ từ, không có nội dung. */
+  const VUN = new RegExp(
+    "^(?:かな|よね|ですね|ですか|ますか|でした|ました|です|ます|" +
+    "[かねよなわぞさがはをにへともやでのしてず])+[。、．，]?$");
+
   /** Áp lực độ dài: quá ngắn thì ghì lại, quá dài thì đẩy cho ngắt. */
   function apLuc(L, dai) {
     if (L < NGAN) return D_NGAN * (1 - L / NGAN);
@@ -448,6 +458,15 @@
         moc.push(c);
         dau = c + 1; i = c; tot = -1; diemTot = -Infinity;
       }
+    }
+
+    // Vá lưới: đừng bao giờ để lọt một câu chỉ có mỗi trợ từ ("か。", "ね。").
+    // Khâu chấm điểm đã chặn rồi, nhưng đây là lỗi khó chịu tới mức đáng có
+    // thêm một lớp chặn cuối: câu như thế vừa vô nghĩa với người đọc, vừa làm
+    // máy dịch bịa ra cả một câu tiếng Việt từ một chữ không có nội dung.
+    for (let j = moc.length - 1; j > 0; j--) {
+      const doan = chu.slice(viTri[moc[j - 1] + 1].a, viTri[moc[j]].b).trim();
+      if (VUN.test(doan)) moc.splice(j - 1, 1);      // bỏ chỗ ngắt trước nó
     }
 
     // Lượt 3: dựng câu VÀ ĐẶT DẤU CÂU.

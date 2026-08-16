@@ -47,7 +47,9 @@
   /* Nối chữ                                                             */
   /* ================================================================== */
 
-  const CJK = /[぀-ヿ㐀-䶿一-鿿＀-￯]/;
+  // Gộp cả khối dấu câu CJK (、。「」…) vào đây: sau dấu phẩy tiếng Nhật thì
+  // KHÔNG có dấu cách, nên nó phải được coi là "chữ dính" y như kanji.
+  const CJK = /[\u3000-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]/;
 
   /** Nối hai mẩu: tiếng Nhật thì dính liền, tiếng có khoảng trắng thì thêm dấu cách. */
   function noiChu(a, b) {
@@ -81,6 +83,73 @@
       // Mẩu chỉ có mỗi nhãn thì bỏ hẳn, đừng để lại khoảng trắng mồ côi.
       if (!sach.trim()) continue;
       ra.push(sach === s ? c : { t: c.t, d: c.d, s: sach, ev: c.ev });
+    }
+    return ra;
+  }
+
+  /* ================================================================== */
+  /* Xé mẩu quá to                                                       */
+  /* ================================================================== */
+
+  /**
+   * Có đường lấy phụ đề trả về nguyên một DÒNG làm một mẩu (đường đọc lại từ
+   * bảng bản chép lời của YouTube), mà một dòng thì hay chứa trọn một câu rưỡi.
+   * Coi mẩu là đơn vị không chia được thì ranh giới câu bị khoá cứng theo cách
+   * chia dòng của họ — đúng cái mình đang muốn thoát ra.
+   *
+   * Xé ở hai chỗ: dấu kết câu có sẵn, và đuôi thể lịch sự khi phía sau không
+   * phải chữ nối tiếp (「〜説明します」+「まず〜」 thì xé, 「〜ますが」 thì không).
+   * Mốc thời gian của phần bị xé chia theo tỉ lệ số ký tự — không chuẩn tuyệt
+   * đối, nhưng chỉ áp dụng cho mẩu dài, mà mẩu dài thì vốn dĩ cả dòng cũng chỉ
+   * có mỗi một mốc thô.
+   */
+  const XE_DAI = 14;
+  const XE_DAU = /[。．！？!?…]+/g;
+  const XE_KET = new RegExp(
+    "(?:ませんでした|でしょう|でした|ました|ません|ましょう|です|ます|ください)" +
+    "(?!ます|ませ)(?![かがねよのけしとにをでもやっー、，。．！？!?])", "g");
+  /**
+   * Ranh giới VẾ nằm lọt trong một mẩu. Không phải chỗ hết câu, nên xé ra chỉ
+   * để có một ranh giới mà đặt 、 vào — 「〜ますが試合は〜」 đọc liền một hơi thì
+   * máy dịch không biết đâu là vế nhượng bộ, mà thêm 、 vào là biết ngay.
+   */
+  const XE_VE = new RegExp(
+    "(?:ますが|ですが|ましたが|でしたが|ませんが|ますので|ますから|ですので|" +
+    "けれども|けれど|けど|ので|のに)(?![はも、，。．])", "g");
+
+  function xePhach(cues) {
+    const ra = [];
+    for (const c of cues) {
+      const s = String(c.s);
+      if (s.length < XE_DAI) { ra.push(c); continue; }
+
+      const cho = new Set(), choVe = new Set();
+      let m;
+      XE_DAU.lastIndex = 0;
+      while ((m = XE_DAU.exec(s))) cho.add(m.index + m[0].length);
+      XE_KET.lastIndex = 0;
+      while ((m = XE_KET.exec(s))) cho.add(m.index + m[0].length);
+      XE_VE.lastIndex = 0;
+      while ((m = XE_VE.exec(s))) choVe.add(m.index + m[0].length);
+
+      const mo = [...new Set([...cho, ...choVe])]
+        .filter((i) => i > 0 && i < s.length).sort((a, b) => a - b);
+      if (!mo.length) { ra.push(c); continue; }
+
+      let truoc = 0;
+      for (const i of [...mo, s.length]) {
+        const phan = s.slice(truoc, i);
+        if (phan.trim()) {
+          const t0 = c.t + c.d * (truoc / s.length);
+          const t1 = c.t + c.d * (i / s.length);
+          ra.push({
+            t: t0, d: Math.max(0.05, t1 - t0), s: phan,
+            ev: i === s.length && c.ev,
+            ve: choVe.has(i) && !cho.has(i)
+          });
+        }
+        truoc = i;
+      }
     }
     return ra;
   }
@@ -142,11 +211,29 @@
     "ぐらい|くらい|ほど|だけ|しか|ば|ず|し|て|" +
     "[はがをにへともやかで])$");
 
-  /** Mở đầu câu mới: liên từ chuyển ý. Gặp là nên ngắt TRƯỚC nó. */
-  const MO_DAU = new RegExp(
-    "^(?:そして|しかし|ですから|だから|それでも|それから|それで|そのため|そこで|" +
-    "つまり|また|まず|次に|最後に|では|じゃあ|さて|ところで|一方|ただし|ただ|" +
-    "とにかく|実は|例えば|なぜなら|ちなみに|しかも|さらに|やはり|もちろん|でも)");
+  // Liên từ chuyển ý. Dùng cho hai việc trái chiều nhau nên để riêng chuỗi:
+  // ngắt câu TRƯỚC nó, mà đặt dấu phẩy thì lại SAU nó (「しかし、〜」).
+  // Nhóm RÕ: chỉ có thể là liên từ, không thể là gì khác.
+  const LIEN_TU_RO =
+    "そして|しかし|ですから|だから|それでも|それから|それで|そのため|そこで|" +
+    "つまり|さて|ところで|一方|ただし|とにかく|実は|例えば|なぜなら|ちなみに|" +
+    "しかも|さらに|やはり|もちろん";
+  // Nhóm MỜ: hay làm liên từ, nhưng cũng hay là chữ thường (「また今度」 =
+  // "lần tới nữa", không phải "ngoài ra"). Vẫn dùng để ngắt câu, nhưng KHÔNG
+  // được tự động kéo theo dấu phẩy — đặt phẩy sai chỗ còn hại hơn thiếu phẩy.
+  const LIEN_TU_MO = "また|まず|次に|最後に|では|じゃあ|ただ|でも";
+  const LIEN_TU = LIEN_TU_RO + "|" + LIEN_TU_MO;
+  const MO_DAU = new RegExp("^(?:" + LIEN_TU + ")");
+  const MO_DAU_DUOI = new RegExp("(?:" + LIEN_TU_RO + ")$");
+
+  /**
+   * Chỗ đặt được 読点 (、). Tiếng Nhật đặt dấu phẩy SAU vế nối (〜て、〜が、
+   * 〜ので、〜けど、) và sau liên từ đứng đầu câu. Cố ý KHÔNG có を／に／の —
+   * đó là trợ từ cách nằm giữa cụm, đặt phẩy vào đấy là sai.
+   */
+  const CHO_PHAY = new RegExp(
+    "(?:けれども|けれど|けど|ので|のに|から|たら|なら|ながら|つつ|" +
+    LIEN_TU + "|[てでがしは])$");
 
   // Tiếng có khoảng trắng (Anh…): không có hình thái để bám, nhưng vài chữ thì
   // chắc chắn không kết câu được, và vài chữ thì hay mở câu.
@@ -264,6 +351,31 @@
     return d;
   }
 
+  /**
+   * Có nên đặt 、 ở ranh giới này không.
+   *
+   * Đòi hỏi hai thứ cùng lúc: chỗ đó phải ĐẶT ĐƯỢC dấu phẩy về mặt ngữ pháp, và
+   * người nói phải thật sự ngắt hơi ở đó (hoặc YouTube xuống dòng ở đó). Chỉ có
+   * một tín hiệu thì thôi, thà thiếu dấu phẩy còn hơn đặt sai chỗ.
+   *
+   * Trả về "lienTu" cho trường hợp liên từ đứng đầu câu (「しかし、〜」): chỗ ấy
+   * luôn có 、 theo sau, khỏi chờ người ta nghỉ và cũng khỏi xét khoảng cách
+   * tối thiểu — dấu phẩy nằm ngay sau ba chữ đầu câu là đúng chính tả.
+   */
+  function nenPhay(duoi, mauSau, lang, nhip, ve, coCJK) {
+    if (coCJK) {
+      if (MO_DAU_DUOI.test(duoi)) return "lienTu";
+      if (!CHO_PHAY.test(duoi)) return false;
+      // Ranh giới do xePhach tìm ra ngay trong lòng một mẩu: mình xé ở đó CHÍNH
+      // VÌ đó là ranh giới vế, nên khỏi đòi thêm khoảng lặng (mà cũng chẳng có,
+      // vì cả mẩu vốn chỉ có một mốc thời gian chung).
+      if (ve) return true;
+      return lang >= nhip * 0.6;
+    }
+    // Tiếng Anh thì ngược lại: dấu phẩy đứng TRƯỚC liên từ (…, but…).
+    return !!mauSau && LA_MO.test(mauSau) && lang >= nhip * 0.6;
+  }
+
   /** Áp lực độ dài: quá ngắn thì ghì lại, quá dài thì đẩy cho ngắt. */
   function apLuc(L, dai) {
     if (L < NGAN) return D_NGAN * (1 - L / NGAN);
@@ -277,7 +389,7 @@
 
   function ghepCau(cues, opt) {
     const o = opt || {};
-    const cs = locNhieu(cues || []);
+    const cs = xePhach(locNhieu(cues || []));
     const n = cs.length;
     if (!n) return [];
 
@@ -338,24 +450,58 @@
       }
     }
 
-    // Lượt 3: dựng câu.
+    // Lượt 3: dựng câu VÀ ĐẶT DẤU CÂU.
+    //
+    // Đây mới là đích của cả thuật toán. Bản tự sinh không có lấy một dấu nào,
+    // mà máy dịch thì đọc dấu câu để biết đâu là chủ đề, đâu là vế phụ, đâu là
+    // hết ý — đưa cho nó một chuỗi chữ trần thì nó tự đoán, và đoán sai. Cho nó
+    // một câu có chấm có phẩy đúng chỗ thì bản dịch khác hẳn.
+    //
+    // Chỉ thêm 。 và 、 (tiếng có khoảng trắng thì . và ,) — không một chữ
+    // kanji/hiragana/katakana nào được thêm hay bớt.
+    const CHAM = coCJK ? "。" : ".";
+    const PHAY_DAU = coCJK ? "、" : ",";
+    const CACH_PHAY = coCJK ? 8 : 16;     // hai dấu phẩy đừng sát nhau quá
+    const DUOI_PHAY = coCJK ? 6 : 12;     // và đừng đặt sát ngay trước dấu chấm
+
     const ra = [];
     let k = 0;
     for (const het of moc) {
-      const c0 = viTri[k].a, c1 = viTri[het].b;
-      let s = chu.slice(c0, c1);
+      let s = "";
+      const manh = [];
+      let phayCuoi = 0;
+      for (let i = k; i <= het; i++) {
+        const moi = noiChu(s, cs[i].s);
+        const a = moi.length - cs[i].s.length;
+        if (moi.length > a) manh.push({ t: cs[i].t, d: cs[i].d, a, b: moi.length });
+        s = moi;
+        const nen = i < het &&
+          viTri[het].b - viTri[i].b >= DUOI_PHAY &&
+          !/[、，,。．.!?！？…]\s*$/.test(s) &&
+          nenPhay(s.slice(-24), cs[i + 1] ? cs[i + 1].s.trim() : null,
+                  lang[i] === Infinity ? 99 : lang[i], nhip[i],
+                  !!cs[i].ve, coCJK);
+        if (nen && (nen === "lienTu" || s.length - phayCuoi >= CACH_PHAY)) {
+          s += PHAY_DAU;
+          phayCuoi = s.length;
+        }
+      }
+
       // Mẩu đầu câu có thể mang sẵn dấu cách ở đầu (phụ đề tiếng có khoảng
       // trắng); gạt đi rồi dời mốc theo, chứ không đụng vào chữ.
       const bo = s.length - s.replace(/^\s+/, "").length;
-      s = s.slice(bo);
-      const goc0 = c0 + bo;
-      const manh = [];
-      for (let i = k; i <= het; i++) {
-        const a = Math.max(0, viTri[i].a - goc0);
-        const b = Math.max(a, viTri[i].b - goc0);
-        if (b > a) manh.push({ t: cs[i].t, d: cs[i].d, a, b });
+      if (bo) {
+        s = s.slice(bo);
+        for (const m of manh) { m.a = Math.max(0, m.a - bo); m.b = Math.max(m.a, m.b - bo); }
       }
+      s = s.replace(/\s+$/, "");
+      for (const m of manh) { m.b = Math.min(m.b, s.length); m.a = Math.min(m.a, m.b); }
+
       if (s.trim()) {
+        // Kết câu. Dấu phẩy trót nằm cuối thì đổi thành dấu chấm, chứ để
+        // "〜が、" rồi hết câu thì máy dịch lại tưởng câu còn dở.
+        s = s.replace(/[、，,]\s*$/, "");
+        if (!HET_CAU.test(s)) s += CHAM;
         ra.push({ t: cs[k].t, tEnd: cs[het].t + cs[het].d, s, manh });
       }
       k = het + 1;
@@ -363,5 +509,5 @@
     return ra;
   }
 
-  goc.CatCau = { ghepCau, noiChu, locNhieu };
+  goc.CatCau = { ghepCau, noiChu, locNhieu, xePhach };
 })(typeof self !== "undefined" ? self : this);

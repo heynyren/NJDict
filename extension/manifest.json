@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NJDict",
-  "version": "4.9.0",
+  "version": "4.10.0",
   "description": "Bôi đen từ tiếng Nhật trên web hoặc PDF để tra nghĩa ngay: từ vựng, âm Hán Việt, sổ tay và ôn tập.",
   "permissions": [
     "contextMenus",

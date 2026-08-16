@@ -56,7 +56,11 @@
     if (!a) return b;
     if (!b) return a;
     if (/\s$/.test(a) || /^\s/.test(b)) return a + b;   // mẩu đã tự mang dấu cách
-    const dinh = CJK.test(a[a.length - 1]) && CJK.test(b[0]);
+    // Chỉ chèn dấu cách khi CẢ HAI bên đều không phải chữ CJK. Tiếng Nhật không
+    // dùng dấu cách, kể cả quanh chữ Latinh nằm lẫn trong câu: bản gốc là
+    // 「フィジカルAI」 và 「AIが」, chèn thêm dấu cách vào là mình tự bịa ra một
+    // ký tự mà YouTube không hề có.
+    const dinh = CJK.test(a[a.length - 1]) || CJK.test(b[0]);
     return a + (dinh ? "" : " ") + b;
   }
 
@@ -187,7 +191,11 @@
 
   // Bẫy: vài chữ KẾT câu lại tình cờ kết thúc bằng một tiểu từ (「こんにちは」
   // kết bằng は). Chặn trước, kẻo luật TREO bên dưới hiểu nhầm.
-  const JA_KHONG_TREO = /(?:こんにちは|こんばんは|おはようございます|おはよう|さようなら)$/;
+  // Kèm luôn các câu đáp trọn vẹn chỉ có một từ: 「はい」「なるほど」. Không có
+  // vị ngữ thật, nhưng chúng ĐÚNG là một câu, và nếu không kể ra ở đây thì luật
+  // "danh từ trơ" bên dưới sẽ dính chúng vào câu sau.
+  const JA_KHONG_TREO =
+    /(?:こんにちは|こんばんは|おはようございます|おはよう|さようなら|はい|いいえ|ええ|うん|なるほど|そうですね|わかりました|分かりました)$/;
 
   // Đuôi KHÔNG THỂ kết câu. Luật quan trọng nhất của tiếng Nhật: gặp là chặn,
   // vì đây đích thị là người ta lấy hơi giữa chừng. Cố ý KHÔNG có か (kết câu
@@ -218,7 +226,11 @@
   // Nhóm MỜ: hay làm liên từ, nhưng cũng hay là chữ thường (「また今度」 =
   // "lần tới nữa", không phải "ngoài ra"). Vẫn dùng để ngắt câu, nhưng KHÔNG
   // được tự động kéo theo dấu phẩy — đặt phẩy sai chỗ còn hại hơn thiếu phẩy.
-  const JA_LIEN_TU = JA_LIEN_TU_RO + "|また|まず|次に|最後に|では|じゃあ|ただ|でも";
+  //
+  // Cố ý KHÔNG có 「では」: nó vừa là liên từ "vậy thì", vừa là trợ từ ghép
+  // 「〜では」 (「フィジカルAIでは中国が…」). Trong bản tin thì nghĩa trợ từ áp đảo,
+  // mà đoán nhầm thì cắt đôi câu ngay giữa chủ ngữ — thà bỏ hẳn tín hiệu này.
+  const JA_LIEN_TU = JA_LIEN_TU_RO + "|また|まず|次に|最後に|じゃあ|ただ|でも";
 
   // Chỗ đặt được 読点. Cố ý KHÔNG có を／に／の — đó là trợ từ cách nằm giữa
   // cụm, đặt phẩy vào đấy là sai.
@@ -227,6 +239,16 @@
     JA_LIEN_TU + "|[てでがしは])$");
 
   // Mảnh vụn rặt trợ từ, không có lấy một chữ mang nội dung.
+  // Đuôi câu chấp nhận được tuy không phải vị ngữ: tiểu từ cuối câu.
+  const JA_CUOI_OK = /[かねよなわぞさ]$/;
+
+  // Chữ Latinh và katakana dính nhau thành một từ ghép — 「フィジカル」+「AI」 =
+  // 「フィジカルAI」. Phụ đề tự sinh tách chúng thành hai mẩu, và nếu giữa hai mẩu
+  // đó có một nhịp nghỉ thì thuật toán tưởng hết câu, cắt đôi ngay giữa tên
+  // riêng. Bắt lấy đúng cặp này rồi chặn.
+  const JA_GHEP_DUOI = /[ァ-ヿーA-Za-z0-9]$/;
+  const JA_GHEP_HAT = /^[ァ-ヿーA-Za-z0-9]/;
+
   const JA_VUN = new RegExp(
     "^(?:かな|よね|ですね|ですか|ますか|でした|ました|です|ます|" +
     "[かねよなわぞさがはをにへともやでのしてず])+[。、．，]?$");
@@ -298,6 +320,11 @@
       // Tiếng Nhật đã có luật "mẩu kế tiếp là trợ từ" chặn tuyệt đối, nên
       // đuôi treo chỉ cần mức vừa; hai thứ tiếng kia không có gì đỡ nên phải mạnh.
       treo: null, treoYeu: JA_TREO,
+      cuoiOK: JA_CUOI_OK,
+      // Câu tiếng Nhật phải kết bằng VỊ NGỮ. Kết bằng một danh từ trơ
+      // (「…働き手としてフィジカル」) thì đích thị là câu còn dở.
+      danhTro: true,
+      ghepDuoi: JA_GHEP_DUOI, ghepHat: JA_GHEP_HAT,
       hatTreo: JA_HAT_TREO,
       moDau: new RegExp("^(?:" + JA_LIEN_TU + ")"),
       moDauYeu: null,
@@ -378,6 +405,7 @@
   // phải thì khoảng lặng thắng, và ra một câu chỉ có mỗi chữ 「か」.
   // Riêng dấu câu CÓ SẴN trong bản gốc vẫn thắng, vì nó thoát ra sớm hơn.
   const D_HAT_TREO  = -20;
+  const D_GHEP_TU   = -5.0;   // cắt ngang một từ ghép katakana + Latinh
   const D_MO_DAU    = 1.2;
   const D_MO_DAU_YEU = 0.6;
   const D_HET_SK    = 0.35;   // hết một sự kiện phụ đề: gợi ý yếu thôi
@@ -459,9 +487,12 @@
     else if (L.treo && L.treo.test(duoi)) d += D_TREO_MANH;
     else if (L.treoYeu && L.treoYeu.test(duoi)) d += D_TREO;
     else if (L.ketYeu && L.ketYeu.test(duoi)) d += D_KET_YEU;
+    else if (L.cuoiOK && L.cuoiOK.test(duoi)) d += 0;      // tiểu từ cuối câu
+    else if (L.danhTro) d += D_TREO;                        // danh từ trơ, chưa có vị ngữ
 
     // 4. Mẩu kế tiếp nói gì về chỗ này.
     if (mauSau) {
+      if (L.ghepDuoi && L.ghepDuoi.test(duoi) && L.ghepHat.test(mauSau)) d += D_GHEP_TU;
       if (L.hatTreo && L.hatTreo.test(mauSau)) d += D_HAT_TREO;
       else if (L.moDau.test(mauSau)) d += D_MO_DAU;
       else if (L.moDauYeu && L.moDauYeu.test(mauSau)) d += D_MO_DAU_YEU;

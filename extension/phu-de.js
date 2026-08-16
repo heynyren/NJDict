@@ -185,6 +185,10 @@
 
     const cs = await capBangYouTube();
     if (cs.length) return { cue: cs, cach: "bang" };
+    if (khungBang()) {
+      throw new Error("Thấy bảng bản chép lời của YouTube nhưng không đọc được dòng nào — "
+        + "có vẻ họ vừa đổi cách dựng bảng. Bấm Thử lại; còn không thì báo lại để sửa.");
+    }
     throw new Error("YouTube không cho tải phụ đề, mà cũng chưa mở được bảng bản chép lời của họ. "
       + "Bấm “…” dưới video → “Hiện bản chép lời” — hiện ra là chỗ này tự lấy, không cần bấm gì thêm.");
   }
@@ -200,7 +204,76 @@
     return p.reduce((a, b) => a * 60 + b, 0);
   }
 
-  function doanBang() { return document.querySelectorAll("ytd-transcript-segment-renderer"); }
+  /** Bảng bản chép lời của YouTube, nếu đang có trên trang. */
+  function khungBang() {
+    return document.querySelector('[target-id="engagement-panel-searchable-transcript"]')
+      || document.querySelector("ytd-transcript-renderer")
+      || document.querySelector("ytd-transcript-segment-list-renderer");
+  }
+
+  /** Quét cả trong shadow root mở — dùng trong phạm vi hẹp thôi, vì tốn. */
+  function quetSau(goc, hop, ra) {
+    ra = ra || [];
+    const con = goc.querySelectorAll ? goc.querySelectorAll("*") : [];
+    for (const el of con) {
+      if (hop(el)) ra.push(el);
+      if (el.shadowRoot) quetSau(el.shadowRoot, hop, ra);
+    }
+    return ra;
+  }
+
+  /**
+   * Các dòng trong bảng bản chép lời của YouTube.
+   *
+   * Đi từ chắc nhất tới liều nhất, vì đây là DOM của người khác và họ đổi luôn:
+   *   1. đúng tên thẻ quen thuộc;
+   *   2. tên thẻ nào có chứa "transcript-segment", tìm cả trong shadow root;
+   *   3. bí quá thì bất cứ dòng nào trong bảng mà chữ MỞ ĐẦU bằng một mốc giờ —
+   *      cái đó thì YouTube có đổi kiểu gì cũng còn, vì người đọc cần nhìn thấy.
+   */
+  function doanBang() {
+    const a = document.querySelectorAll("ytd-transcript-segment-renderer");
+    if (a.length) return [...a];
+    const khung = khungBang();
+    if (!khung) return [];
+    const b = quetSau(khung, (el) => /transcript-segment/i.test(el.tagName || ""));
+    if (b.length) return b;
+    return quetSau(khung, (el) => {
+      if (!laDong(el)) return false;
+      // Chỉ lấy dòng trong cùng, không lấy cả khối bọc ngoài. Phải xét bằng
+      // laDong chứ không phải "có mốc giờ": ô chứa riêng mốc giờ ("0:00") cũng
+      // có mốc giờ, và nếu tính nó là con hợp lệ thì chính dòng cha bị loại —
+      // rốt cuộc không nhặt được dòng nào.
+      for (const c of el.children) if (laDong(c)) return false;
+      return true;
+    });
+  }
+
+  const MOC_GIO = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*([\s\S]+)$/;
+
+  /** Trông có giống một dòng bản chép lời không: mốc giờ, RỒI tới chữ. */
+  function laDong(el) {
+    const m = String((el && el.textContent) || "").replace(/\s+/g, " ").trim().match(MOC_GIO);
+    return !!(m && m[2] && m[2].trim());
+  }
+
+  /**
+   * Đọc một dòng thành {t, s}.
+   *
+   * Bản trước bám vào hai lớp CSS .segment-timestamp / .segment-text. Bảng của
+   * YouTube hiện ra đầy chữ ngay trên màn hình mà chỗ này vẫn đọc ra rỗng, rồi
+   * báo "không mở được" — nhìn rất vô lý. Nay không có lớp quen thuộc thì đọc
+   * thẳng chữ của cả dòng và tách mốc giờ ở đầu.
+   */
+  function docDoan(el) {
+    const ts = el.querySelector && el.querySelector(".segment-timestamp");
+    const tx = el.querySelector && el.querySelector(".segment-text");
+    const gon = (x) => String(x || "").replace(/\s+/g, " ").trim();
+    if (ts && tx && gon(tx.textContent)) return { t: giayTu(ts.textContent), s: gon(tx.textContent) };
+    const m = gon(el.textContent).match(MOC_GIO);
+    if (m) return { t: giayTu(m[1]), s: gon(m[2]) };
+    return null;
+  }
 
   /** Nút mở bản chép lời của YouTube — thử theo cấu trúc trước, rồi theo nhãn. */
   function timNutChepLoi() {
@@ -230,8 +303,14 @@
     return new Promise((giai) => {
       if (doanBang().length) { giai(true); return; }
       let xong = false;
-      const thoi = (v) => { if (xong) return; xong = true; qs.disconnect(); clearTimeout(h); giai(v); };
-      const qs = new MutationObserver(() => { if (doanBang().length) thoi(true); });
+      const thoi = (v) => { if (xong) return; xong = true; qs.disconnect(); clearTimeout(h); clearTimeout(hen); giai(v); };
+      // YouTube đụng vào DOM liên tục, mà việc dò dòng thì không phải rẻ — hãm
+      // lại, đừng chạy theo từng thay đổi một.
+      let hen = 0;
+      const qs = new MutationObserver(() => {
+        if (hen) return;
+        hen = setTimeout(() => { hen = 0; if (doanBang().length) thoi(true); }, 250);
+      });
       qs.observe(document.body, { childList: true, subtree: true });
       const h = setTimeout(() => thoi(false), han || 20000);
     });
@@ -251,10 +330,8 @@
 
     const ds = [];
     doanBang().forEach((el) => {
-      const ts = (el.querySelector(".segment-timestamp") || {}).textContent || "";
-      const tx = (el.querySelector(".segment-text") || {}).textContent || "";
-      const chu = tx.replace(/\s+/g, " ").trim();
-      if (chu) ds.push({ t: giayTu(ts), d: 0, s: chu });
+      const d = docDoan(el);
+      if (d && d.s) ds.push({ t: d.t, d: 0, s: d.s });
     });
     // Bảng của YouTube không cho biết mỗi mẩu dài bao lâu -> suy từ mốc mẩu sau.
     for (let i = 0; i < ds.length; i++) ds[i].d = (i + 1 < ds.length) ? Math.max(0, ds[i + 1].t - ds[i].t) : 4;

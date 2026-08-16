@@ -341,13 +341,60 @@
    * báo "không mở được" — nhìn rất vô lý. Nay không có lớp quen thuộc thì đọc
    * thẳng chữ của cả dòng và tách mốc giờ ở đầu.
    */
+/**
+   * Số giây của một cụm giờ ĐỌC THÀNH CHỮ: "43 seconds", "1 minute, 11 seconds",
+   * "1 phút 11 giây", "20秒". Trả về null nếu đầu chuỗi không phải cụm như vậy.
+   */
+  function giayTuChu(chu) {
+    const m = String(chu || "").match(
+      /^\s*((?:\d+\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|giờ|phút|giây|時間|分|秒)[,\s]*)+)/i);
+    if (!m) return null;
+    let tong = 0, co = false;
+    m[1].replace(/(\d+)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?|giờ|phút|giây|時間|分|秒)/gi,
+      (_, n, dv) => {
+        const d = dv.toLowerCase();
+        const he = /^(h|giờ|時間)/.test(d) ? 3600 : /^(m|phút|分)/.test(d) ? 60 : 1;
+        tong += (+n) * he; co = true; return "";
+      });
+    return co ? { giay: tong, dai: m[1].length } : null;
+  }
+
+  /**
+   * Gỡ phần mốc giờ bị lặp ở đầu dòng.
+   *
+   * Bảng của YouTube nhét thêm một bản mốc giờ ĐỌC THÀNH CHỮ cho trình đọc màn
+   * hình ("43 seconds"). Mắt không thấy, nhưng đọc chữ thô thì thấy — và thế là
+   * nó chui vào câu, rồi chui luôn sang bản dịch: "20 giây Đó là một cánh đồng
+   * lúa…". Vô nghĩa với người đọc, mà còn làm máy dịch hiểu lệch cả câu.
+   *
+   * Chỉ gỡ khi cụm đó ĐÚNG BẰNG mốc giờ của chính dòng này. Gỡ bừa mọi cụm giờ
+   * ở đầu câu thì có ngày cắt mất chữ thật — người ta vẫn mở đầu bằng "20秒で…".
+   */
+  function donDauDong(chu, t) {
+    let s = String(chu || "").trim();
+    for (let i = 0; i < 3; i++) {
+      const g = giayTuChu(s);
+      if (g && Math.abs(g.giay - t) <= 1) { s = s.slice(g.dai).trim(); continue; }
+      const lap = s.match(/^(\d{1,2}:\d{2}(?::\d{2})?)[\s·-]*/);
+      if (lap && Math.abs(giayTu(lap[1]) - t) <= 1) { s = s.slice(lap[0].length).trim(); continue; }
+      break;
+    }
+    return s;
+  }
+
   function docDoan(el) {
     const tim = (sel) => (el.querySelector && el.querySelector(sel))
       || (el.shadowRoot && el.shadowRoot.querySelector(sel)) || null;
     const ts = tim(".segment-timestamp"), tx = tim(".segment-text");
-    if (ts && tx && chuSau(tx)) return { t: giayTu(chuSau(ts)), s: chuSau(tx) };
+    if (ts && tx && chuSau(tx)) {
+      const t = giayTu(chuSau(ts));
+      return { t: t, s: donDauDong(chuSau(tx), t) };
+    }
     const m = chuSau(el).match(MOC_GIO);
-    if (m) return { t: giayTu(m[1]), s: m[2].trim() };
+    if (m) {
+      const t = giayTu(m[1]);
+      return { t: t, s: donDauDong(m[2], t) };
+    }
     return null;
   }
 
@@ -491,9 +538,19 @@
     manh: -1,           // chỉ số mẩu đang được nói TRONG câu đó
     bam: true,          // tự cuộn theo video
     songNgu: false,
+    co: 2,              // nấc cỡ chữ đang dùng
     dich: new Map(),    // chỉ số câu -> bản dịch
     host: null, root: null, oList: null, oTrong: null
   };
+
+  /**
+   * Các nấc cỡ chữ.
+   *
+   * Mặc định là nấc 27px — gấp đôi cỡ cũ. Chữ Nhật nhỏ thì rất khó đọc, nhất là
+   * kanji nhiều nét; mà đây là bảng để ĐỌC chứ không phải một danh sách để liếc.
+   * Vẫn để nút chỉnh vì màn hình mỗi người một khác.
+   */
+  const CO_CHU = [15, 20, 27, 34];
 
   const dem = (t) => {
     const g = Math.max(0, Math.floor(t));
@@ -576,13 +633,16 @@
     .ln:hover { background: var(--surface-2); }
     .ln.on { background: var(--accent-soft); }
     .ln .ts {
-      flex: none; font-variant-numeric: tabular-nums; font-size: 11.5px; font-weight: 700;
+      flex: none; font-variant-numeric: tabular-nums; font-weight: 700;
       color: var(--accent); background: var(--surface-2); border: none;
-      border-radius: 8px; padding: 3px 6px; margin-top: 1px;
+      border-radius: 8px; padding: 3px 6px; margin-top: 2px;
+      font-size: calc(var(--cx) * 0.5);
     }
     .ln.on .ts { background: var(--surface); }
-    .ln .tx { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
-    .ln .vi { display: block; margin-top: 3px; color: var(--ink-2); font-size: 12.5px; }
+    /* Cỡ chữ lấy từ một biến duy nhất, phần dịch và mốc giờ ăn theo tỉ lệ — đổi
+       một chỗ là cả thẻ giãn ra cân đối, không phải chỉnh ba con số rời. */
+    .ln .tx { flex: 1; min-width: 0; font-size: var(--cx); line-height: 1.5; overflow-wrap: anywhere; }
+    .ln .vi { display: block; margin-top: 4px; color: var(--ink-2); font-size: calc(var(--cx) * 0.76); }
     /* Mẩu đang được nói. Chỉ tô trong dòng đang chạy — tô cả bảng thì mắt không
        biết nhìn đâu. Bo góc + nền mềm chứ không gạch chân: chữ Nhật có nhiều nét
        chạm đáy, gạch chân là dính vào chữ. */
@@ -661,6 +721,8 @@
     top.appendChild(nm);
     const demCau = document.createElement("span"); demCau.className = "n";
     top.appendChild(demCau);
+    const nutCo = nutChip("text-aa", "", "Cỡ chữ — bấm để đổi");
+    top.appendChild(nutCo);
     const nutThu = nutChip("caret-up", "", "Thu gọn");
     top.appendChild(nutThu);
     box.appendChild(top);
@@ -692,6 +754,19 @@
     S.host = host; S.root = root; S.oList = list;
 
     /* --- hành vi --- */
+    const apDungCo = () => {
+      box.style.setProperty("--cx", CO_CHU[S.co] + "px");
+      nutCo.title = "Cỡ chữ " + CO_CHU[S.co] + "px — bấm để đổi";
+      // Bảng đang bám theo video mà chữ giãn ra thì dòng đang nói trôi mất chỗ.
+      if (S.bam) requestAnimationFrame(() => cuonToi(S.hien));
+    };
+    apDungCo();
+    nutCo.addEventListener("click", () => {
+      S.co = (S.co + 1) % CO_CHU.length;
+      apDungCo();
+      try { chrome.storage.local.set({ ytCoChu: S.co }); } catch (e) { /* không nhớ được thì thôi */ }
+    });
+
     nutThu.addEventListener("click", () => {
       const thu = box.classList.toggle("hide");
       nutThu.innerHTML = "";
@@ -978,8 +1053,13 @@
   }
 
   function guiDich() {
-    const ids = [...hangCho].filter((i) => !S.dich.has(i) && S.cau[i]).slice(0, 40);
+    const cho = [...hangCho].filter((i) => !S.dich.has(i) && S.cau[i]);
+    const ids = cho.slice(0, 40);
+    // Phần vượt quá một loạt phải GIỮ LẠI, không được xoá sạch hàng chờ: các
+    // dòng đó đang nằm sẵn trong tầm mắt nên sẽ không có lượt "lọt vào khung"
+    // nào nữa để đánh thức chúng — bỏ là chúng đứng mãi ở dấu "…".
     hangCho.clear();
+    cho.slice(40).forEach((i) => hangCho.add(i));
     if (!ids.length) return;
     ids.forEach((i) => S.dich.set(i, ""));      // giữ chỗ, khỏi gửi trùng
     const texts = ids.map((i) => S.cau[i].s.trim());
@@ -992,6 +1072,7 @@
         const vi = ln && ln.querySelector(".vi");
         if (vi) vi.textContent = t;
       });
+      if (hangCho.size) henGui();          // còn hàng chờ thì đi tiếp loạt sau
     });
   }
 
@@ -1105,6 +1186,12 @@
     }
     return true;
   }
+
+  try {
+    chrome.storage.local.get("ytCoChu", (r) => {
+      if (r && typeof r.ytCoChu === "number" && CO_CHU[r.ytCoChu]) S.co = r.ytCoChu;
+    });
+  } catch (e) { /* chạy được thì tốt, không thì dùng cỡ mặc định */ }
 
   function maVideo() {
     if (location.pathname !== "/watch") return "";

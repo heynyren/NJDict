@@ -49,7 +49,10 @@ Hai phần dùng chung dữ liệu kanji (`kanji-data.js`), hệ thiết kế (`
   bằng cách trả 200 kèm thân rỗng): hỏi trình phát trong trang, fetch cùng nguồn,
   và cuối cùng là đọc lại bảng bản chép lời của chính YouTube.
   Đang phát thì **mẩu đang được nói tự sáng lên** ngay trong câu — phụ đề tự sinh
-  có mốc theo từng từ nên tô được tới từng chữ. Bản dịch sáng theo **câu**, không
+  có mốc theo từng từ nên tô được tới từng chữ. Bấm một cái vào dòng là nghe lại
+  từ đúng chỗ đó; rê chuột tới dòng nào là hiện ngay nghĩa dòng ấy (dịch sẵn ngầm
+  từ trước); bôi đen rồi lưu thì mục mang theo mốc giây của dòng **sớm nhất** mà
+  vùng bôi đen chạm tới. Bản dịch sáng theo **câu**, không
   tô tới từng từ: máy dịch cả câu nên không có căn cứ nào nói từ Việt nào ứng với
   từ Nhật nào, tô theo tỉ lệ thời gian chỉ là bịa ra sự tương ứng.
 

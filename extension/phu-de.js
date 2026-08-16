@@ -439,13 +439,31 @@
     });
   }
 
+  /**
+   * Đóng bảng bản chép lời của YouTube.
+   *
+   * Ba cách, vì cách thứ nhất bám vào id của người ta: nút đóng theo id, nút nào
+   * trong bảng có nhãn "đóng", và cuối cùng là đặt thẳng thuộc tính trạng thái
+   * mà chính YouTube dùng để ẩn bảng. Không đóng được thì bảng của họ nằm lại
+   * chình ình bên cạnh bảng này — hai bảng lời thoại cùng lúc, thừa và rối.
+   */
+  function dongBangYouTube() {
+    for (const bang of khungBang()) {
+      const nut = bang.querySelector("#visibility-button button")
+        || [...bang.querySelectorAll("button")].find((b) =>
+          /close|đóng|閉じ/i.test((b.getAttribute("aria-label") || "") + " " + (b.title || "")));
+      if (nut) { nut.click(); continue; }
+      try { bang.setAttribute("visibility", "ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"); } catch (e) { /* thôi vậy */ }
+    }
+  }
+
   async function capBangYouTube() {
-    let taMo = false;                       // mình mở hay bảng vốn đã mở sẵn
+    let taMo = false, taMoTa = false;       // mình mở hay vốn đã mở sẵn
     if (!doanBang().length) {
       // Nút "bản chép lời" nằm trong phần mô tả, mà phần mô tả thì đang thu gọn.
       const mo = document.querySelector(
         "#description-inline-expander #expand, ytd-text-inline-expander #expand, tp-yt-paper-button#expand");
-      if (mo) { mo.click(); await doi(500); }
+      if (mo) { mo.click(); taMoTa = true; await doi(500); }
       const nut = timNutChepLoi();
       if (nut) { nut.click(); taMo = true; }
       await choDoan(20000);
@@ -463,10 +481,10 @@
 
     // Chỉ đóng bảng nếu CHÍNH MÌNH mở nó ra. Bạn tự mở để đọc mà nó tự đóng lại
     // thì khó chịu hơn nhiều so với việc bảng này bị đẩy xuống một đoạn.
-    if (taMo) {
-      const bang = document.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]');
-      const dong = bang && bang.querySelector("#visibility-button button");
-      if (dong) dong.click();
+    if (taMo) dongBangYouTube();
+    if (taMoTa) {
+      const gap = document.querySelector("#description-inline-expander #collapse, ytd-text-inline-expander #collapse, tp-yt-paper-button#collapse");
+      if (gap) gap.click();
     }
     return ds;
   }
@@ -563,6 +581,35 @@
     return document.querySelector("video.html5-main-video") || document.querySelector("#movie_player video") || document.querySelector("video");
   }
 
+  /**
+   * Dòng SỚM NHẤT mà vùng bôi đen chạm tới.
+   *
+   * Bôi đen vắt qua mấy dòng thì mốc giây đáng lưu là mốc của dòng ĐẦU — quay
+   * lại đó mới nghe được trọn đoạn vừa chọn; lấy dòng cuối thì nghe hụt mất đầu.
+   *
+   * Bản trước lấy dòng chứa CHỖ THẢ CHUỘT, nên bôi ngược từ dưới lên là ra dòng
+   * sai, mà thả trúng khoảng đệm giữa hai dòng thì không ra dòng nào — lúc đó
+   * mục lưu về sổ tay chỉ còn một đường dẫn youtube.com trơ trọi, không mốc giây.
+   */
+  function dongDauVungChon(sel, moc) {
+    let nho = -1;
+    if (sel && sel.rangeCount && S.oList) {
+      const rg = sel.getRangeAt(0);
+      S.oList.querySelectorAll(".ln").forEach((ln) => {
+        let cham = false;
+        try { cham = rg.intersectsNode(ln); } catch (e) { cham = false; }
+        if (!cham) return;
+        const i = +ln.dataset.i;
+        if (nho < 0 || i < nho) nho = i;
+      });
+    }
+    if (nho < 0 && moc && moc.closest) {
+      const ln = moc.closest(".ln");
+      if (ln) nho = +ln.dataset.i;
+    }
+    return nho;
+  }
+
   /** Nguồn để lưu vào sổ tay: URL + tiêu đề + MỐC GIÂY. */
   function nguon(i, chu) {
     const c = S.cau[i];
@@ -632,13 +679,21 @@
     }
     .ln:hover { background: var(--surface-2); }
     .ln.on { background: var(--accent-soft); }
-    .ln .ts {
-      flex: none; font-variant-numeric: tabular-nums; font-weight: 700;
-      color: var(--accent); background: var(--surface-2); border: none;
-      border-radius: 8px; padding: 3px 6px; margin-top: 2px;
-      font-size: calc(var(--cx) * 0.5);
+    /* Cả dòng là chỗ bấm để nghe lại — không cần một nút mốc giây riêng chiếm
+       chỗ nữa. Mốc giờ vẫn còn, nằm trong ô dịch nhanh khi rê chuột tới. */
+    .ln { cursor: pointer; }
+    .tip {
+      position: absolute; left: 10px; right: 10px; z-index: 5;
+      background: var(--surface); color: var(--ink);
+      border-radius: 12px; padding: 8px 11px; font-size: 13.5px; line-height: 1.5;
+      box-shadow: 0 2px 4px rgba(16,24,40,.08), 0 10px 30px rgba(16,24,40,.22);
+      display: none; pointer-events: none;
     }
-    .ln.on .ts { background: var(--surface); }
+    .tip.hien { display: block; }
+    .tip b {
+      color: var(--accent); font-variant-numeric: tabular-nums;
+      margin-right: 6px; font-weight: 700;
+    }
     /* Cỡ chữ lấy từ một biến duy nhất, phần dịch và mốc giờ ăn theo tỉ lệ — đổi
        một chỗ là cả thẻ giãn ra cân đối, không phải chỉnh ba con số rời. */
     .ln .tx { flex: 1; min-width: 0; font-size: var(--cx); line-height: 1.5; overflow-wrap: anywhere; }
@@ -743,10 +798,11 @@
     /* --- danh sách --- */
     const wrap = document.createElement("div"); wrap.className = "wrap";
     const list = document.createElement("div"); list.className = "list";
+    const tip = document.createElement("div"); tip.className = "tip";
     const back = document.createElement("button"); back.className = "back"; back.type = "button";
     back.appendChild(ic("arrow-down", 13));
     const bt = document.createElement("span"); bt.textContent = "Về dòng đang nói"; back.appendChild(bt);
-    wrap.appendChild(list); wrap.appendChild(back);
+    wrap.appendChild(list); wrap.appendChild(tip); wrap.appendChild(back);
     box.appendChild(wrap);
 
     noi.insertBefore(host, noi.firstChild);
@@ -818,14 +874,68 @@
         const sel = root.getSelection ? root.getSelection() : document.getSelection();
         const chu = sel ? String(sel).trim() : "";
         if (!chu || chu.length > 400) return;
-        const ln = e.target && e.target.closest ? e.target.closest(".ln") : null;
-        const i = ln ? +ln.dataset.i : -1;
         if (!window.__NJD_popup) return;
+        const i = dongDauVungChon(sel, e.target);
         window.__NJD_popup(e.clientX + 12, e.clientY + 16, chu, i >= 0 ? nguon(i, chu) : null);
       }, 10);
     });
 
-    S.uiBan = chonBan; S.uiDem = demCau; S.uiBack = back; S.uiTim = oTim;
+    /*
+     * Bấm một cái vào dòng là nghe lại từ đúng chỗ đó.
+     *
+     * Nhưng KHÔNG tua khi đang có vùng bôi đen: kéo chuột để chọn chữ cũng kết
+     * thúc bằng một cú click, mà lúc ấy ý bạn là chọn chữ chứ không phải tua —
+     * tua lúc đó là cướp mất chỗ đang xem.
+     */
+    list.addEventListener("click", (e) => {
+      const sel = root.getSelection ? root.getSelection() : document.getSelection();
+      if (sel && String(sel).trim()) return;
+      const ln = e.target && e.target.closest ? e.target.closest(".ln") : null;
+      if (ln) tuaToi(+ln.dataset.i);
+    });
+
+    /*
+     * Rê chuột tới dòng nào thì hiện ngay bản dịch dòng đó.
+     *
+     * "Ngay" chỉ có được nhờ dịch sẵn từ trước: mọi dòng lọt vào tầm mắt đều
+     * được dịch ngầm và cất vào bộ nhớ, kể cả khi đang tắt Song ngữ. Đợi tới lúc
+     * rê chuột mới gọi mạng thì cái ô này bật ra rồi ngồi chờ, vô duyên.
+     *
+     * Đang bật Song ngữ thì thôi: bản dịch đã nằm ngay dưới từng dòng rồi, bày
+     * thêm một ô đè lên chính chữ đang đọc chỉ tổ vướng.
+     */
+    let dongDangRe = -1;
+    const anTip = () => { tip.classList.remove("hien"); dongDangRe = -1; };
+    const veTip = (i) => {
+      const ln = list.querySelector('.ln[data-i="' + i + '"]');
+      if (!ln) return;
+      tip.textContent = "";
+      const b = document.createElement("b"); b.textContent = S.cau[i] ? dem(S.cau[i].t) : "";
+      tip.appendChild(b);
+      const sp = document.createElement("span");
+      sp.textContent = S.dich.get(i) || "Đang dịch…";
+      tip.appendChild(sp);
+      tip.classList.add("hien");
+      // Đặt dưới dòng; sát đáy quá thì lật lên trên cho khỏi tràn ra ngoài bảng.
+      const tren = ln.offsetTop - list.scrollTop + ln.offsetHeight + 6;
+      const cao = tip.offsetHeight || 40;
+      tip.style.top = (tren + cao > list.clientHeight ? Math.max(4, tren - ln.offsetHeight - cao - 12) : tren) + "px";
+    };
+    list.addEventListener("mousemove", (e) => {
+      if (S.songNgu) { anTip(); return; }
+      const ln = e.target && e.target.closest ? e.target.closest(".ln") : null;
+      if (!ln) { anTip(); return; }
+      const i = +ln.dataset.i;
+      if (i === dongDangRe) return;
+      dongDangRe = i;
+      if (!S.dich.has(i)) { hangCho.add(i); henGui(); }   // chưa kịp dịch thì giục
+      veTip(i);
+    });
+    list.addEventListener("mouseleave", anTip);
+    list.addEventListener("scroll", anTip);
+
+    S.uiBan = chonBan; S.uiDem = demCau; S.uiBack = back; S.uiTim = oTim; S.uiTip = tip;
+    S.veTip = veTip; S.dongDangRe = () => dongDangRe;
     return true;
   }
 
@@ -857,13 +967,10 @@
     list.textContent = "";
     S.cau.forEach((c, i) => {
       const ln = document.createElement("div");
-      ln.className = "ln"; ln.dataset.i = String(i);
-
-      const ts = document.createElement("button");
-      ts.className = "ts"; ts.type = "button"; ts.textContent = dem(c.t);
-      ts.title = "Tua tới đây";
-      ts.addEventListener("click", (e) => { e.stopPropagation(); tuaToi(i); });
-      ln.appendChild(ts);
+      ln.className = "ln";
+      ln.dataset.i = String(i);
+      ln.dataset.ts = dem(c.t);            // mốc giờ vẫn giữ, chỉ không chiếm chỗ nữa
+      ln.title = "Bấm để nghe lại từ " + dem(c.t);
 
       const tx = document.createElement("div"); tx.className = "tx";
       veManh(tx, c);
@@ -1031,7 +1138,10 @@
 
   function batQuanSat() {
     if (quanSat) { quanSat.disconnect(); quanSat = null; }
-    if (!S.songNgu || !S.oList || typeof IntersectionObserver !== "function") return;
+    // Cố ý KHÔNG phụ thuộc Song ngữ: dịch ngầm cả khi đang tắt, để rê chuột tới
+    // dòng nào là có bản dịch NGAY. Bản dịch nằm sẵn trong bộ nhớ thì bật Song
+    // ngữ sau đó cũng hiện tức thì, không phải chờ lần nữa.
+    if (!S.oList || typeof IntersectionObserver !== "function") return;
     quanSat = new IntersectionObserver((mps) => {
       let co = false;
       mps.forEach((m) => {
@@ -1071,6 +1181,8 @@
         const ln = S.oList && S.oList.querySelector('.ln[data-i="' + i + '"]');
         const vi = ln && ln.querySelector(".vi");
         if (vi) vi.textContent = t;
+        // Đang rê chuột đúng dòng này mà bản dịch vừa về -> thay chữ "Đang dịch…"
+        if (S.veTip && S.dongDangRe && S.dongDangRe() === i) S.veTip(i);
       });
       if (hangCho.size) henGui();          // còn hàng chờ thì đi tiếp loạt sau
     });

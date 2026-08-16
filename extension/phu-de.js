@@ -582,6 +582,26 @@
   }
 
   /**
+   * Chữ trong vùng bôi đen — CHỈ phần lời thoại.
+   *
+   * Không dùng thẳng chuỗi của Selection: bôi đen vắt qua mấy dòng thì nó lôi
+   * theo cả chữ "Lưu" trên nút và cả dòng bản dịch nằm dưới, rồi chỗ đó chui
+   * vào bản dịch lẫn mục lưu sổ tay. Đặt user-select:none cho các nút cũng
+   * không cứu được: nó chặn thao tác kéo, chứ chuỗi Selection vẫn mang đủ chữ.
+   *
+   * Nên nhân bản vùng chọn ra rồi bỏ hẳn mấy phần không phải lời thoại.
+   */
+  function chuVungChon(sel) {
+    if (!sel || !sel.rangeCount) return "";
+    let fr;
+    try { fr = sel.getRangeAt(0).cloneContents(); } catch (e) { return String(sel).trim(); }
+    if (fr.querySelectorAll) {
+      fr.querySelectorAll(".sv, .vi, .tip, .back, .top, .bar").forEach((n) => n.remove());
+    }
+    return String(fr.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  /**
    * Dòng SỚM NHẤT mà vùng bôi đen chạm tới.
    *
    * Bôi đen vắt qua mấy dòng thì mốc giây đáng lưu là mốc của dòng ĐẦU — quay
@@ -592,34 +612,61 @@
    * mục lưu về sổ tay chỉ còn một đường dẫn youtube.com trơ trọi, không mốc giây.
    */
   function dongDauVungChon(sel, moc) {
-    let nho = -1;
+    let ra = null;
+    const xet = (m) => { if (m && (!ra || m.t < ra.t)) ra = m; };
     if (sel && sel.rangeCount && S.oList) {
       const rg = sel.getRangeAt(0);
-      S.oList.querySelectorAll(".ln").forEach((ln) => {
-        let cham = false;
-        try { cham = rg.intersectsNode(ln); } catch (e) { cham = false; }
-        if (!cham) return;
-        const i = +ln.dataset.i;
-        if (nho < 0 || i < nho) nho = i;
-      });
+      const cham = (el) => { try { return rg.intersectsNode(el); } catch (e) { return false; } };
+      // Xét tới từng MẨU, không chỉ từng dòng: bôi đen nửa sau một câu ghép thì
+      // mốc đáng lưu là mốc của nửa sau, chứ không phải mốc đầu câu.
+      S.oList.querySelectorAll(".pc").forEach((pc) => { if (cham(pc)) xet(mocCuaManh(pc)); });
+      if (!ra) {
+        S.oList.querySelectorAll(".ln").forEach((ln) => {
+          if (!cham(ln)) return;
+          const i = +ln.dataset.i, c = S.cau[i];
+          if (c) xet({ i: i, k: -1, t: c.t, d: c.tEnd - c.t });
+        });
+      }
     }
-    if (nho < 0 && moc && moc.closest) {
-      const ln = moc.closest(".ln");
-      if (ln) nho = +ln.dataset.i;
+    if (!ra && moc && moc.closest) {
+      const pc = moc.closest(".pc");
+      if (pc) ra = mocCuaManh(pc);
+      else {
+        const ln = moc.closest(".ln");
+        const c = ln && S.cau[+ln.dataset.i];
+        if (c) ra = { i: +ln.dataset.i, k: -1, t: c.t, d: c.tEnd - c.t };
+      }
     }
-    return nho;
+    return ra;
+  }
+
+  /**
+   * Mẩu (và mốc giờ của nó) ứng với một phần tử .pc.
+   *
+   * Ghép cue thành câu là để DỊCH cho tử tế, chứ không phải để gộp luôn cả
+   * chuyện bấm: một câu ghép từ ba mẩu thì vẫn là ba chỗ nghe lại được khác
+   * nhau, y như ba dòng trong bảng của YouTube.
+   */
+  function mocCuaManh(pc) {
+    const ln = pc && pc.closest ? pc.closest(".ln") : null;
+    if (!ln) return null;
+    const i = +ln.dataset.i;
+    const c = S.cau[i];
+    if (!c) return null;
+    const m = c.manh && c.manh[+pc.dataset.k];
+    return m ? { i: i, k: +pc.dataset.k, t: m.t, d: m.d } : { i: i, k: -1, t: c.t, d: c.tEnd - c.t };
   }
 
   /** Nguồn để lưu vào sổ tay: URL + tiêu đề + MỐC GIÂY. */
-  function nguon(i, chu) {
+  function nguon(i, chu, giayChiDinh, dai) {
     const c = S.cau[i];
     if (!c) return null;
-    const t = Math.max(0, Math.floor(c.t));
+    const t = Math.max(0, Math.floor(giayChiDinh == null ? c.t : giayChiDinh));
     return {
       url: "https://www.youtube.com/watch?v=" + S.v,
       title: S.tieuDe || document.title,
       sel: (chu || c.s).slice(0, 400),
-      yt: { v: S.v, t: t, dur: Math.max(1, Math.round(c.tEnd - c.t)), kenh: S.kenh }
+      yt: { v: S.v, t: t, dur: Math.max(1, Math.round(dai == null ? (c.tEnd - c.t) : dai)), kenh: S.kenh }
     };
   }
 
@@ -702,6 +749,9 @@
        biết nhìn đâu. Bo góc + nền mềm chứ không gạch chân: chữ Nhật có nhiều nét
        chạm đáy, gạch chân là dính vào chữ. */
     .pc { border-radius: 5px; padding: 0 1px; }
+    /* Rê vào mẩu nào thì mẩu đó sáng lên: cho thấy mỗi mẩu là một chỗ nghe lại
+       riêng, đúng như từng dòng trong bảng của YouTube. */
+    .ln:hover .pc:hover { background: var(--accent-soft); color: var(--accent); }
     .ln.on .pc.now {
       background: var(--accent-soft); color: var(--accent);
       font-weight: 700; box-shadow: 0 0 0 2px var(--accent-soft);
@@ -709,6 +759,12 @@
     /* Câu đang nói thì bản dịch của nó cũng đậm lên theo. Chỉ tới mức CÂU thôi
        — xem ghi chú ở đầu file về việc vì sao không tô tới từng từ. */
     .ln.on .vi { color: var(--ink); }
+    /* Chỉ CHỮ của lời thoại mới bôi đen được. Nút Lưu, thanh công cụ, ô dịch
+       nhanh… đều là đồ điều khiển — bôi đen vắt qua mấy dòng mà lôi luôn chữ
+       "Lưu" vào giữa câu thì bản dịch hỏng, mà lưu vào sổ tay cũng hỏng theo. */
+    .top, .bar, .back, .tip, .ln .sv {
+      -webkit-user-select: none; user-select: none;
+    }
     .ln .sv {
       flex: none; visibility: hidden; border: 1px solid var(--line); background: var(--surface);
       color: var(--accent); border-radius: 999px; padding: 3px 7px; font-size: 11px; font-weight: 650;
@@ -872,11 +928,12 @@
     root.addEventListener("mouseup", (e) => {
       setTimeout(() => {
         const sel = root.getSelection ? root.getSelection() : document.getSelection();
-        const chu = sel ? String(sel).trim() : "";
+        const chu = chuVungChon(sel);
         if (!chu || chu.length > 400) return;
         if (!window.__NJD_popup) return;
-        const i = dongDauVungChon(sel, e.target);
-        window.__NJD_popup(e.clientX + 12, e.clientY + 16, chu, i >= 0 ? nguon(i, chu) : null);
+        const m = dongDauVungChon(sel, e.target);
+        window.__NJD_popup(e.clientX + 12, e.clientY + 16, chu,
+          m ? nguon(m.i, chu, m.t, m.d) : null);
       }, 10);
     });
 
@@ -890,7 +947,11 @@
     list.addEventListener("click", (e) => {
       const sel = root.getSelection ? root.getSelection() : document.getSelection();
       if (sel && String(sel).trim()) return;
-      const ln = e.target && e.target.closest ? e.target.closest(".ln") : null;
+      const el = e.target;
+      if (!el || !el.closest) return;
+      const pc = el.closest(".pc");
+      if (pc) { const m = mocCuaManh(pc); if (m) { tuaGiay(m.t, m.i); return; } }
+      const ln = el.closest(".ln");
       if (ln) tuaToi(+ln.dataset.i);
     });
 
@@ -904,13 +965,14 @@
      * Đang bật Song ngữ thì thôi: bản dịch đã nằm ngay dưới từng dòng rồi, bày
      * thêm một ô đè lên chính chữ đang đọc chỉ tổ vướng.
      */
-    let dongDangRe = -1;
-    const anTip = () => { tip.classList.remove("hien"); dongDangRe = -1; };
-    const veTip = (i) => {
+    let dongDangRe = -1, khoaDangRe = "";
+    const anTip = () => { tip.classList.remove("hien"); dongDangRe = -1; khoaDangRe = ""; };
+    const veTip = (i, giay) => {
       const ln = list.querySelector('.ln[data-i="' + i + '"]');
       if (!ln) return;
       tip.textContent = "";
-      const b = document.createElement("b"); b.textContent = S.cau[i] ? dem(S.cau[i].t) : "";
+      const b = document.createElement("b");
+      b.textContent = dem(giay != null ? giay : (S.cau[i] ? S.cau[i].t : 0));
       tip.appendChild(b);
       const sp = document.createElement("span");
       sp.textContent = S.dich.get(i) || "Đang dịch…";
@@ -923,13 +985,18 @@
     };
     list.addEventListener("mousemove", (e) => {
       if (S.songNgu) { anTip(); return; }
-      const ln = e.target && e.target.closest ? e.target.closest(".ln") : null;
+      const el = e.target;
+      const ln = el && el.closest ? el.closest(".ln") : null;
       if (!ln) { anTip(); return; }
+      const pc = el.closest(".pc");
+      const m = pc ? mocCuaManh(pc) : null;
       const i = +ln.dataset.i;
-      if (i === dongDangRe) return;
-      dongDangRe = i;
+      const giay = m ? m.t : (S.cau[i] ? S.cau[i].t : 0);
+      const khoa = i + ":" + (m ? m.k : -1);
+      if (khoa === khoaDangRe) return;
+      khoaDangRe = khoa; dongDangRe = i;
       if (!S.dich.has(i)) { hangCho.add(i); henGui(); }   // chưa kịp dịch thì giục
-      veTip(i);
+      veTip(i, giay);
     });
     list.addEventListener("mouseleave", anTip);
     list.addEventListener("scroll", anTip);
@@ -1107,13 +1174,18 @@
     if (rvfc != null) { const vd = video(); if (vd && vd.cancelVideoFrameCallback) vd.cancelVideoFrameCallback(rvfc); rvfc = null; }
   }
 
-  function tuaToi(i) {
-    const vd = video(), c = S.cau[i];
-    if (!vd || !c) return;
-    vd.currentTime = Math.max(0, c.t + 0.02);
+  function tuaGiay(t, i) {
+    const vd = video();
+    if (!vd) return;
+    vd.currentTime = Math.max(0, t + 0.02);
     const p = vd.play();
     if (p && p.catch) p.catch(() => {});
-    S.hien = i; S.manh = -1; danhDau(true);
+    if (i != null) { S.hien = i; S.manh = -1; danhDau(true); }
+  }
+
+  function tuaToi(i) {
+    const c = S.cau[i];
+    if (c) tuaGiay(c.t, i);
   }
 
   /* --- dịch song ngữ --- */

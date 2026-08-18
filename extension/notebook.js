@@ -890,7 +890,8 @@ function revealCard() {
   if (it.means && it.means.length) {
     const ul = document.createElement("ul");
     it.means.slice(0, 5).forEach((m) => ul.appendChild(el("li", null, m)));
-    $("stMean").innerHTML = "";
+    // KHÔNG xoá trắng ở đây: showCard() đã dọn rồi, mà chữ Hán thì dòng nét/bộ
+    // vừa thêm phía trên cũng nằm trong ô này — xoá là mất.
     $("stMean").appendChild(ul);
   }
   // Ghi chú riêng chỉ hiện SAU khi lật thẻ — nó thường chứa luôn đáp án.
